@@ -20,6 +20,8 @@ If you type "cute cat", only tokens with "cute" and "cat" in sequence will be re
 
 prompt : "A photo of a cute cat wearing sunglasses relaxing on a beach"
 
+attention text: "cat, sunglasses, beach"
+
 output images: orginal, cat, sunglasses, beach
 
 <img src="images/00006-2623256163.png" width="150">

@@ -95,7 +95,7 @@ class Script(scripts.Script):
                     
                     fullfn_without_extension, extension = os.path.splitext(params.filename)
                 
-                    img.save(fullfn_without_extension + "_" + attention + + extension)
+                    img.save(fullfn_without_extension + "_" + attention + extension)
                     
                     if not self.hide_images:
                         self.images += [img]
