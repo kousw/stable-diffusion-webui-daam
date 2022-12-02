@@ -32,8 +32,8 @@ def expand_image(im: torch.Tensor, h = 512, w = 512,  absolute: bool = False, th
 
     return im.squeeze()
 
-def image_overlay_heat_map(im, heat_map, word=None, out_file=None, crop=None):
-    # type: (Image.Image | np.ndarray, torch.Tensor, str, Path, int) -> Image.Image
+def image_overlay_heat_map(im, heat_map, word=None, out_file=None, crop=None, alpha=0.5):
+    # type: (Image.Image | np.ndarray, torch.Tensor, str, Path, int, float) -> Image.Image
 
     # im = im.numpy().array()
         
@@ -43,7 +43,7 @@ def image_overlay_heat_map(im, heat_map, word=None, out_file=None, crop=None):
     heat_map = heat_map.to('cpu').detach().numpy().copy().astype(np.uint8)
     heat_map_img = Image.fromarray(heat_map)
         
-    return Image.blend(im, heat_map_img, 0.5)
+    return Image.blend(im, heat_map_img, alpha)
     
 
 def _convert_heat_map_colors(heat_map : torch.Tensor):
