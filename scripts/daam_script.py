@@ -9,6 +9,7 @@ from modules import script_callbacks
 from modules.processing import (Processed, StableDiffusionProcessing, fix_seed,
                                 process_images)
 from modules.shared import cmd_opts, opts, state
+import modules.shared as shared
 from PIL import Image
 
 from scripts.daam import trace, utils
@@ -52,8 +53,7 @@ class Script(scripts.Script):
         
         fix_seed(p)
         
-        initial_prompt = p.prompt
-        initial_negative_prompt = p.negative_prompt
+        styled_prompt = shared.prompt_styles.apply_styles_to_prompt(p.prompt, p.styles)
         
         attentions = [ s.strip() for s in attention_texts.split(",") ]
         self.attentions = attentions
@@ -69,10 +69,11 @@ class Script(scripts.Script):
         else:
             assert False
             
-        tokens = tokenize(p.prompt.lower())
-        context_size = 77 if len(tokens) <= 75 else 154
+        tokens = tokenize(utils.escape_prompt(styled_prompt))
+        len_check = 0 if (len(tokens) - 1) < 0 else len(tokens) - 1
+        context_size = ((int)(len_check // 75) + 1) * 77
         
-        print("daam run")
+        print("daam run with context_size=", context_size)
         
         with torch.no_grad():
             with trace(p.sd_model, p.height, p.width, context_size) as tr:
@@ -92,7 +93,8 @@ class Script(scripts.Script):
     def before_image_saved(self, params : script_callbacks.ImageSaveParams):
         if self.tracer is not None and len(self.attentions) > 0:
             with torch.no_grad():
-                global_heat_map = self.tracer.compute_global_heat_map(params.p.prompt)
+                styled_prompot = shared.prompt_styles.apply_styles_to_prompt(params.p.prompt, params.p.styles)
+                global_heat_map = self.tracer.compute_global_heat_map(styled_prompot)                
                 
                 if global_heat_map is not None:
                     for attention in self.attentions:

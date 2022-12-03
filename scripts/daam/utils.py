@@ -15,7 +15,7 @@ from ldm.modules.encoders.modules import FrozenCLIPEmbedder, FrozenOpenCLIPEmbed
 import open_clip.tokenizer
 
 
-__all__ = ['expand_image', 'set_seed', 'compute_token_merge_indices', 'image_overlay_heat_map', 'plot_overlay_heat_map', 'plot_mask_heat_map']
+__all__ = ['expand_image', 'set_seed', 'escape_prompt', 'compute_token_merge_indices', 'image_overlay_heat_map', 'plot_overlay_heat_map', 'plot_mask_heat_map']
 
 
 def expand_image(im: torch.Tensor, h = 512, w = 512,  absolute: bool = False, threshold: float = None) -> torch.Tensor:
@@ -142,6 +142,11 @@ def set_seed(seed: int) -> torch.Generator:
 
     return gen
 
+def escape_prompt(prompt :str):
+    prompt = prompt.lower()
+    prompt = re.sub(r"[\(\)\[\]]", "", prompt)
+    prompt = re.sub(r":\d+\.*\d*", "", prompt)
+    return prompt
 
 def compute_token_merge_indices(model, prompt: str, word: str, word_idx: int = None):
         
@@ -156,9 +161,7 @@ def compute_token_merge_indices(model, prompt: str, word: str, word_idx: int = N
     else:
         assert False
         
-    prompt = prompt.lower()
-    escaped_prompt = re.sub(r"[\(\)\[\]]", "", prompt)
-    escaped_prompt = re.sub(r":\d+\.*\d*", "", escaped_prompt)
+    escaped_prompt = escape_prompt(prompt)
     # escaped_prompt = re.sub(r"[_-]", " ", escaped_prompt)
     tokens : list = tokenize(escaped_prompt)
     word = word.lower()
