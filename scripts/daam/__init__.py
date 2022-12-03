@@ -1,3 +1,4 @@
+from __future__ import annotations
 from .hook import *
 from .utils import *
 from .evaluate import *
