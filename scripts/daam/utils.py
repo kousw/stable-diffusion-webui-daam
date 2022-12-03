@@ -3,7 +3,8 @@ from pathlib import Path
 import random
 import re
 
-from PIL import Image
+from PIL import Image, ImageFont, ImageDraw
+from fonts.ttf import Roboto
 import matplotlib.pyplot as plt
 import numpy as np
 # import spacy
@@ -32,8 +33,24 @@ def expand_image(im: torch.Tensor, h = 512, w = 512,  absolute: bool = False, th
 
     return im.squeeze()
 
-def image_overlay_heat_map(im, heat_map, word=None, out_file=None, crop=None, alpha=0.5):
-    # type: (Image.Image | np.ndarray, torch.Tensor, str, Path, int, float) -> Image.Image
+def _write_on_image(img, caption, font_size = 32):
+    ix,iy = img.size
+    draw = ImageDraw.Draw(img)
+    margin=2
+    fontsize=font_size
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.truetype(Roboto, fontsize)
+    text_height=iy-60
+    tx = draw.textbbox((0,0),caption,font)
+    draw.text((int((ix-tx[2])/2),text_height+margin),caption,(0,0,0),font=font)
+    draw.text((int((ix-tx[2])/2),text_height-margin),caption,(0,0,0),font=font)
+    draw.text((int((ix-tx[2])/2+margin),text_height),caption,(0,0,0),font=font)
+    draw.text((int((ix-tx[2])/2-margin),text_height),caption,(0,0,0),font=font)
+    draw.text((int((ix-tx[2])/2),text_height), caption,(255,255,255),font=font)
+    return img
+
+def image_overlay_heat_map(im, heat_map, word=None, out_file=None, crop=None, alpha=0.5, caption=None):
+    # type: (Image.Image | np.ndarray, torch.Tensor, str, Path, int, float, str) -> Image.Image
 
     # im = im.numpy().array()
         
@@ -43,7 +60,13 @@ def image_overlay_heat_map(im, heat_map, word=None, out_file=None, crop=None, al
     heat_map = heat_map.to('cpu').detach().numpy().copy().astype(np.uint8)
     heat_map_img = Image.fromarray(heat_map)
         
-    return Image.blend(im, heat_map_img, alpha)
+        
+    img = Image.blend(im, heat_map_img, alpha)
+    
+    if caption:
+        img = _write_on_image(img, caption)
+        
+    return img
     
 
 def _convert_heat_map_colors(heat_map : torch.Tensor):

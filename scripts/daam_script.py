@@ -29,7 +29,9 @@ class Script(scripts.Script):
         attention_texts = gr.Text(label='Attention texts for visualization. (comma separated)', value='')
 
         hide_images = gr.Checkbox(label='Hide heatmap images', value=False)
-
+        
+        hide_caption = gr.Checkbox(label='Hide caption', value=False)
+        
         alpha = gr.Slider(label='Blend', value=0.5, minimum=0, maximum=1, step=0.01)
         
         self.tracer = None
@@ -38,13 +40,14 @@ class Script(scripts.Script):
         self.hide_images = hide_images
         self.alpha = alpha
         
-        return [attention_texts, hide_images, alpha]
+        return [attention_texts, hide_images, hide_caption, alpha]
     
-    def run(self, p : StableDiffusionProcessing, attention_texts : str, hide_images : bool, alpha : float):
+    def run(self, p : StableDiffusionProcessing, attention_texts : str, hide_images : bool, hide_caption : bool, alpha : float):
 
         initial_info = None
         self.images = []
         self.hide_images = hide_images
+        self.hide_caption = hide_caption
         self.alpha = alpha
         
         fix_seed(p)
@@ -94,8 +97,9 @@ class Script(scripts.Script):
                 for attention in self.attentions:
                                
                     img_size = params.image.size
+                    caption = attention if not self.hide_caption else None
                     heat_map = utils.expand_image(global_heat_map.compute_word_heat_map(attention), img_size[1], img_size[0])
-                    img : Image.Image = utils.image_overlay_heat_map(params.image, heat_map, alpha=self.alpha)
+                    img : Image.Image = utils.image_overlay_heat_map(params.image, heat_map, alpha=self.alpha, caption=caption)
                     
                     fullfn_without_extension, extension = os.path.splitext(params.filename)
                 
