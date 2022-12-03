@@ -179,6 +179,7 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         self.head_idx = head_idx
         self.img_height = img_height
         self.img_width =  img_width
+        self.calledCount = 0
 
     @torch.no_grad()
     def _up_sample_attn(self, x, value, factor, method='bicubic'):
@@ -234,6 +235,7 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         return (weights * maps).sum(1, keepdim=True).cpu()
     
     def _forward(hk_self, self, x, context=None, mask=None):
+        hk_self.calledCount += 1
         batch_size, sequence_length, _ = x.shape
         h = self.heads
 
@@ -316,7 +318,7 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             return factor_b
         
         factor_base = calc_factor_base(hk_self.img_width, hk_self.img_height)
-
+        
         for i in range(hidden_states.shape[0] // slice_size):
             start_idx = i * slice_size
             end_idx = (i + 1) * slice_size
@@ -325,9 +327,9 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             )
             factor = int(math.sqrt(factor_base // attn_slice.shape[1]))
             attn_slice = attn_slice.softmax(-1)
-            hid_states = torch.einsum("b i j, b j d -> b i d", attn_slice, value[start_idx:end_idx])
-            
-            if use_context and attn_slice.shape[-1] == hk_self.context_size:    
+            hid_states = torch.einsum("b i j, b j d -> b i d", attn_slice, value[start_idx:end_idx])            
+                
+            if use_context and  hk_self.calledCount % 2 == 1 and attn_slice.shape[-1] == hk_self.context_size:    
                 if factor >= 1: # shape: (batch_size, 64 // factor, 64 // factor, 77)
                     factor //= 1
                     maps = hk_self._up_sample_attn(attn_slice, value, factor)
