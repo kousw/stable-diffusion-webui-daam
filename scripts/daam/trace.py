@@ -111,7 +111,8 @@ class DiffusionHeatMapHooker(AggregateHooker):
     def all_heat_maps(self):
         return self.forward_hook.all_heat_maps
     
-    def clear_heat_map(self):
+    def reset(self):
+        map(lambda module: module.reset(), self.module)
         return self.forward_hook.all_heat_maps.clear()
 
     def compute_global_heat_map(self, prompt, time_weights=None, time_idx=None, last_n=None, first_n=None, factors=None):
@@ -131,6 +132,9 @@ class DiffusionHeatMapHooker(AggregateHooker):
                 Mutually exclusive with `time_idx`.
             factors: Restrict the application to heat maps with spatial factors in this set. If `None`, use all sizes.
         """
+        if len(self.forward_hook.all_heat_maps) == 0:
+            return None
+        
         if time_weights is None:
             time_weights = [1.0] * len(self.forward_hook.all_heat_maps)
 
@@ -180,7 +184,11 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         self.img_height = img_height
         self.img_width =  img_width
         self.calledCount = 0
-
+        
+    def reset(self):
+        self.heat_maps.clear()
+        self.calledCount = 0
+        
     @torch.no_grad()
     def _up_sample_attn(self, x, value, factor, method='bicubic'):
         # type: (torch.Tensor, torch.Tensor, int, Literal['bicubic', 'conv']) -> torch.Tensor
@@ -318,6 +326,7 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             return factor_b
         
         factor_base = calc_factor_base(hk_self.img_width, hk_self.img_height)
+        
         
         for i in range(hidden_states.shape[0] // slice_size):
             start_idx = i * slice_size

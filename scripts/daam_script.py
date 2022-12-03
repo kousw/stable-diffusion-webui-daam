@@ -74,7 +74,7 @@ class Script(scripts.Script):
         
         print("daam run")
         
-        with torch.cuda.amp.autocast(dtype=torch.float16), torch.no_grad():
+        with torch.no_grad():
             with trace(p.sd_model, p.height, p.width, context_size) as tr:
                 self.tracer = tr
                                
@@ -91,24 +91,25 @@ class Script(scripts.Script):
     
     def before_image_saved(self, params : script_callbacks.ImageSaveParams):
         if self.tracer is not None and len(self.attentions) > 0:
-            with torch.cuda.amp.autocast(dtype=torch.float16), torch.no_grad():                                
+            with torch.no_grad():
                 global_heat_map = self.tracer.compute_global_heat_map(params.p.prompt)
                 
-                for attention in self.attentions:
-                               
-                    img_size = params.image.size
-                    caption = attention if not self.hide_caption else None
-                    heat_map = utils.expand_image(global_heat_map.compute_word_heat_map(attention), img_size[1], img_size[0])
-                    img : Image.Image = utils.image_overlay_heat_map(params.image, heat_map, alpha=self.alpha, caption=caption)
+                if global_heat_map is not None:
+                    for attention in self.attentions:
+                                
+                        img_size = params.image.size
+                        caption = attention if not self.hide_caption else None
+                        heat_map = utils.expand_image(global_heat_map.compute_word_heat_map(attention), img_size[1], img_size[0])
+                        img : Image.Image = utils.image_overlay_heat_map(params.image, heat_map, alpha=self.alpha, caption=caption)
+                        
+                        fullfn_without_extension, extension = os.path.splitext(params.filename)
                     
-                    fullfn_without_extension, extension = os.path.splitext(params.filename)
-                
-                    img.save(fullfn_without_extension + "_" + attention + extension)
+                        img.save(fullfn_without_extension + "_" + attention + extension)
+                        
+                        if not self.hide_images:
+                            self.images += [img]
                     
-                    if not self.hide_images:
-                        self.images += [img]
-                
-                self.tracer.clear_heat_map()
+                self.tracer.reset()
 
     def process(self, p, *args):
         return 
