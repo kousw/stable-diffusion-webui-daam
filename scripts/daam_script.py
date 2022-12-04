@@ -54,7 +54,7 @@ class Script(scripts.Script):
         with gr.Row():
             alpha = gr.Slider(label='Heatmap blend alpha', value=0.5, minimum=0, maximum=1, step=0.01)
         
-            heatmap_image_scale = gr.Slider(label='Heatmap image scale', value=1.0, minimum=0, maximum=1, step=0.025)
+            heatmap_image_scale = gr.Slider(label='Heatmap image scale', value=1.0, minimum=0.1, maximum=1, step=0.025)
         
         self.tracer = None
         
