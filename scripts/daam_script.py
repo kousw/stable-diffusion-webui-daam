@@ -190,7 +190,6 @@ class Script(scripts.Script):
         
         # if it is last batch pos, clear heatmaps
         if batch_pos == params.p.batch_size - 1:
-            print("clear")
             self.tracer.reset()
             
         return
