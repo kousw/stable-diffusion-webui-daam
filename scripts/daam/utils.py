@@ -50,8 +50,8 @@ def _write_on_image(img, caption, font_size = 32):
     draw.text((int((ix-tx[2])/2),text_height), caption,(255,255,255),font=font)
     return img
 
-def image_overlay_heat_map(img, heat_map, word=None, out_file=None, crop=None, alpha=0.5, caption=None):
-    # type: (Image.Image | np.ndarray, torch.Tensor, str, Path, int, float, str) -> Image.Image
+def image_overlay_heat_map(img, heat_map, word=None, out_file=None, crop=None, alpha=0.5, caption=None, image_scale=1.0):
+    # type: (Image.Image | np.ndarray, torch.Tensor, str, Path, int, float, str, float) -> Image.Image
     assert(img is not None)
     
     if heat_map is not None:   
@@ -67,6 +67,11 @@ def image_overlay_heat_map(img, heat_map, word=None, out_file=None, crop=None, a
         
     if caption:
         img = _write_on_image(img, caption)
+        
+    if image_scale != 1.0:
+        x, y = img.size
+        size = (int(x * image_scale), int(y * image_scale))
+        img = img.resize(size, Image.BICUBIC)
         
     return img
     

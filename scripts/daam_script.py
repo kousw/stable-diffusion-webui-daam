@@ -5,6 +5,7 @@ import re
 import traceback
 
 import gradio as gr
+import modules.images as images
 import modules.scripts as scripts
 import torch
 from ldm.modules.encoders.modules import FrozenCLIPEmbedder, FrozenOpenCLIPEmbedder
@@ -21,6 +22,11 @@ from scripts.daam import trace, utils
 before_image_saved_handler = None
 
 class Script(scripts.Script):
+    
+    GRID_LAYOUT_AUTO = "Auto"
+    GRID_LAYOUT_PREVENT_EMPTY = "Prevent Empty Spot"
+    GRID_LAYOUT_BATCH_LENGTH_AS_ROW = "Batch Length As Row"
+    
 
     def title(self):
         return "Daam script"
@@ -32,27 +38,47 @@ class Script(scripts.Script):
                 
         attention_texts = gr.Text(label='Attention texts for visualization. (comma separated)', value='')
 
-        hide_images = gr.Checkbox(label='Hide heatmap images', value=False)
+        with gr.Row():
+            hide_images = gr.Checkbox(label='Hide heatmap images', value=False)
+            
+            hide_caption = gr.Checkbox(label='Hide caption', value=False)
+            
+        with gr.Row():
+            use_grid = gr.Checkbox(label='Use grid (output to grid dir)', value=False)
+                
+            grid_layouyt = gr.Dropdown(
+                    [Script.GRID_LAYOUT_AUTO, Script.GRID_LAYOUT_PREVENT_EMPTY, Script.GRID_LAYOUT_BATCH_LENGTH_AS_ROW], label="Grid layout",
+                    value=Script.GRID_LAYOUT_AUTO
+                )
+                
+        with gr.Row():
+            alpha = gr.Slider(label='Heatmap blend alpha', value=0.5, minimum=0, maximum=1, step=0.01)
         
-        hide_caption = gr.Checkbox(label='Hide caption', value=False)
-        
-        alpha = gr.Slider(label='Blend', value=0.5, minimum=0, maximum=1, step=0.01)
+            heatmap_image_scale = gr.Slider(label='Heatmap image scale', value=1.0, minimum=0, maximum=1, step=0.025)
         
         self.tracer = None
-        self.attentions = []
-        self.images = []
-        self.hide_images = hide_images
-        self.alpha = alpha
         
-        return [attention_texts, hide_images, hide_caption, alpha]
+        return [attention_texts, hide_images, hide_caption, use_grid, grid_layouyt, alpha, heatmap_image_scale] 
     
-    def run(self, p : StableDiffusionProcessing, attention_texts : str, hide_images : bool, hide_caption : bool, alpha : float):
+    def run(self,
+            p : StableDiffusionProcessing, 
+            attention_texts : str, 
+            hide_images : bool, 
+            hide_caption : bool, 
+            use_grid : bool, 
+            grid_layouyt :str,
+            alpha : float, 
+            heatmap_image_scale : float):
 
         initial_info = None
         self.images = []
         self.hide_images = hide_images
         self.hide_caption = hide_caption
         self.alpha = alpha
+        self.use_grid = use_grid
+        self.grid_layouyt = grid_layouyt
+        self.heatmap_image_scale = heatmap_image_scale
+        self.grid_images = list()
         
         fix_seed(p)
         
@@ -93,6 +119,26 @@ class Script(scripts.Script):
                 self.tracer = None        
 
         before_image_saved_handler = None
+        
+        if self.use_grid and len(self.grid_images) > 0:
+
+            grid_layout = self.grid_layouyt
+            if grid_layout == Script.GRID_LAYOUT_AUTO:
+                if p.batch_size * p.n_iter == 1:
+                    grid_layout = Script.GRID_LAYOUT_PREVENT_EMPTY
+                else:
+                    grid_layout = Script.GRID_LAYOUT_BATCH_LENGTH_AS_ROW
+                       
+            if grid_layout == Script.GRID_LAYOUT_PREVENT_EMPTY:
+                grid_img = images.image_grid(self.grid_images)
+            elif grid_layout == Script.GRID_LAYOUT_BATCH_LENGTH_AS_ROW:
+                grid_img = images.image_grid(self.grid_images, batch_size=p.batch_size, rows=p.batch_size * p.n_iter)
+            else:
+                pass
+            
+            images.save_image(grid_img, p.outpath_grids, "grid_daam", grid=True, p=p)
+            if not self.hide_images:
+                self.images += [grid_img]
 
         processed = Processed(p, self.images, p.seed, initial_info)
 
@@ -116,6 +162,7 @@ class Script(scripts.Script):
                 global_heat_map = self.tracer.compute_global_heat_map(styled_prompot, batch_pos)                
                 
                 if global_heat_map is not None:
+                    grid_images = []
                     for attention in self.attentions:
                                 
                         img_size = params.image.size
@@ -125,14 +172,21 @@ class Script(scripts.Script):
                         if heat_map is None : print(f"No heatmaps for '{attention}'")
                         
                         heat_map_img = utils.expand_image(heat_map, img_size[1], img_size[0]) if heat_map is not None else None
-                        img : Image.Image = utils.image_overlay_heat_map(params.image, heat_map_img, alpha=self.alpha, caption=caption)
+                        img : Image.Image = utils.image_overlay_heat_map(params.image, heat_map_img, alpha=self.alpha, caption=caption, image_scale=self.heatmap_image_scale)
                         
-                        fullfn_without_extension, extension = os.path.splitext(params.filename)                    
-                        img.save(fullfn_without_extension + "_" + attention + extension)
+                        fullfn_without_extension, extension = os.path.splitext(params.filename) 
+                        full_filename = fullfn_without_extension + "_" + attention + extension
                         
-                        if not self.hide_images:
-                            self.images += [img]
+                        if self.use_grid:
+                            grid_images.append(img)
+                        else:                  
+                            img.save(full_filename)
                             
+                            if not self.hide_images:
+                                self.images += [img]
+                    
+                    if self.use_grid:
+                        self.grid_images += grid_images
         
         # if it is last batch pos, clear heatmaps
         if batch_pos == params.p.batch_size - 1:
