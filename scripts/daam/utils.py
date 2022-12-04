@@ -50,20 +50,21 @@ def _write_on_image(img, caption, font_size = 32):
     draw.text((int((ix-tx[2])/2),text_height), caption,(255,255,255),font=font)
     return img
 
-def image_overlay_heat_map(im, heat_map, word=None, out_file=None, crop=None, alpha=0.5, caption=None):
+def image_overlay_heat_map(img, heat_map, word=None, out_file=None, crop=None, alpha=0.5, caption=None):
     # type: (Image.Image | np.ndarray, torch.Tensor, str, Path, int, float, str) -> Image.Image
-
-    # im = im.numpy().array()
-        
-    shape : torch.Size = heat_map.shape
-    # heat_map = heat_map.unsqueeze(-1).expand(shape[0], shape[1], 3).clone()
-    heat_map = _convert_heat_map_colors(heat_map)
-    heat_map = heat_map.to('cpu').detach().numpy().copy().astype(np.uint8)
-    heat_map_img = Image.fromarray(heat_map)
-        
-        
-    img = Image.blend(im, heat_map_img, alpha)
+    assert(img is not None)
     
+    if heat_map is not None:   
+        shape : torch.Size = heat_map.shape
+        # heat_map = heat_map.unsqueeze(-1).expand(shape[0], shape[1], 3).clone()
+        heat_map = _convert_heat_map_colors(heat_map)
+        heat_map = heat_map.to('cpu').detach().numpy().copy().astype(np.uint8)
+        heat_map_img = Image.fromarray(heat_map)     
+            
+        img = Image.blend(img, heat_map_img, alpha)
+    else:
+        img = img.copy()
+        
     if caption:
         img = _write_on_image(img, caption)
         
@@ -169,6 +170,9 @@ def compute_token_merge_indices(model, prompt: str, word: str, word_idx: int = N
     merge_idxs = []
     
     needles = tokenize(word)
+    
+    if len(needles) == 0:
+        return []
         
     for i, token in enumerate(tokens):
         if needles[0] == token and len(needles) > 1:

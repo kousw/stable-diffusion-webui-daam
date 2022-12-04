@@ -1,5 +1,8 @@
 from __future__ import annotations
+from collections import defaultdict
 import os
+import re
+import traceback
 
 import gradio as gr
 import modules.scripts as scripts
@@ -15,6 +18,7 @@ from PIL import Image
 
 from scripts.daam import trace, utils
 
+before_image_saved_handler = None
 
 class Script(scripts.Script):
 
@@ -25,9 +29,7 @@ class Script(scripts.Script):
         return True
 
     def ui(self, is_img2img):
-        
-        script_callbacks.on_before_image_saved(self.before_image_saved)
-        
+                
         attention_texts = gr.Text(label='Attention texts for visualization. (comma separated)', value='')
 
         hide_images = gr.Checkbox(label='Hide heatmap images', value=False)
@@ -56,7 +58,7 @@ class Script(scripts.Script):
         
         styled_prompt = shared.prompt_styles.apply_styles_to_prompt(p.prompt, p.styles)
         
-        attentions = [ s.strip() for s in attention_texts.split(",") ]
+        attentions = [ s.strip() for s in attention_texts.split(",") if s.strip() ]
         self.attentions = attentions
         
         clip = None
@@ -76,6 +78,9 @@ class Script(scripts.Script):
         
         print("daam run with context_size=", context_size)
         
+        global before_image_saved_handler
+        before_image_saved_handler = lambda params : self.before_image_saved(params)
+                
         with torch.no_grad():
             with trace(p.sd_model, p.height, p.width, context_size) as tr:
                 self.tracer = tr
@@ -87,32 +92,54 @@ class Script(scripts.Script):
                 
                 self.tracer = None        
 
+        before_image_saved_handler = None
+
         processed = Processed(p, self.images, p.seed, initial_info)
 
         return processed
     
-    def before_image_saved(self, params : script_callbacks.ImageSaveParams):
+    def before_image_saved(self, params : script_callbacks.ImageSaveParams):               
+        batch_pos = -1
+        if params.p.batch_size > 1:
+            match  = re.search(r"Batch pos: (\d+)", params.pnginfo['parameters'])
+            if match:
+                batch_pos = int(match.group(1))
+        else:
+            batch_pos = 0
+            
+        if batch_pos < 0:
+            return        
+        
         if self.tracer is not None and len(self.attentions) > 0:
             with torch.no_grad():
                 styled_prompot = shared.prompt_styles.apply_styles_to_prompt(params.p.prompt, params.p.styles)
-                global_heat_map = self.tracer.compute_global_heat_map(styled_prompot)                
+                global_heat_map = self.tracer.compute_global_heat_map(styled_prompot, batch_pos)                
                 
                 if global_heat_map is not None:
                     for attention in self.attentions:
                                 
                         img_size = params.image.size
                         caption = attention if not self.hide_caption else None
-                        heat_map = utils.expand_image(global_heat_map.compute_word_heat_map(attention), img_size[1], img_size[0])
-                        img : Image.Image = utils.image_overlay_heat_map(params.image, heat_map, alpha=self.alpha, caption=caption)
                         
-                        fullfn_without_extension, extension = os.path.splitext(params.filename)
-                    
+                        heat_map = global_heat_map.compute_word_heat_map(attention)
+                        if heat_map is None : print(f"No heatmaps for '{attention}'")
+                        
+                        heat_map_img = utils.expand_image(heat_map, img_size[1], img_size[0]) if heat_map is not None else None
+                        img : Image.Image = utils.image_overlay_heat_map(params.image, heat_map_img, alpha=self.alpha, caption=caption)
+                        
+                        fullfn_without_extension, extension = os.path.splitext(params.filename)                    
                         img.save(fullfn_without_extension + "_" + attention + extension)
                         
                         if not self.hide_images:
                             self.images += [img]
-                    
-                self.tracer.reset()
+                            
+        
+        # if it is last batch pos, clear heatmaps
+        if batch_pos == params.p.batch_size - 1:
+            print("clear")
+            self.tracer.reset()
+            
+        return
 
     def process(self, p, *args):
         return 
@@ -120,3 +147,12 @@ class Script(scripts.Script):
     def postprocess(self, *args):
         return
 
+
+def handle_before_image_saved(params : script_callbacks.ImageSaveParams):
+    
+    if before_image_saved_handler is not None and callable(before_image_saved_handler):
+        before_image_saved_handler(params)
+   
+    return
+ 
+script_callbacks.on_before_image_saved(handle_before_image_saved)   

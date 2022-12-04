@@ -25,7 +25,7 @@ __all__ = ['trace', 'DiffusionHeatMapHooker', 'HeatMap', 'MmDetectHeatMap']
 
 
 class UNetForwardHooker(ObjectHooker[UNetModel]):
-    def __init__(self, module: UNetModel, heat_maps: defaultdict):
+    def __init__(self, module: UNetModel, heat_maps: defaultdict(defaultdict)):
         super().__init__(module)
         self.all_heat_maps = []
         self.heat_maps = heat_maps
@@ -52,7 +52,9 @@ class HeatMap:
 
     def compute_word_heat_map(self, word: str, word_idx: int = None) -> torch.Tensor:
         merge_idxs = compute_token_merge_indices(self.tokenizer, self.prompt, word, word_idx)
-        assert(len(merge_idxs) > 0)
+        if len(merge_idxs) == 0:
+            return None
+        
         return self.heat_maps[merge_idxs].mean(0)
 
 
@@ -94,7 +96,7 @@ class MmDetectHeatMap:
 
 class DiffusionHeatMapHooker(AggregateHooker):
     def __init__(self, model: LatentDiffusion, heigth : int, width : int, context_size : int = 77, weighted: bool = False, layer_idx: int = None, head_idx: int = None):
-        heat_maps = defaultdict(list)
+        heat_maps = defaultdict(lambda: defaultdict(list)) # batch index, factor, attention
         modules = [UNetCrossAttentionHooker(x, heigth, width, heat_maps, context_size=context_size, weighted=weighted, head_idx=head_idx) for x in UNetCrossAttentionLocator().locate(model.model.diffusion_model, layer_idx)]
         self.forward_hook = UNetForwardHooker(model.model.diffusion_model, heat_maps)
         modules.append(self.forward_hook)
@@ -116,8 +118,8 @@ class DiffusionHeatMapHooker(AggregateHooker):
         map(lambda module: module.reset(), self.module)
         return self.forward_hook.all_heat_maps.clear()
 
-    def compute_global_heat_map(self, prompt, time_weights=None, time_idx=None, last_n=None, first_n=None, factors=None):
-        # type: (str, List[float], int, int, int, List[float]) -> HeatMap
+    def compute_global_heat_map(self, prompt, batch_index, time_weights=None, time_idx=None, last_n=None, first_n=None, factors=None):
+        # type: (str, int, int, int, int, int, List[float]) -> HeatMap
         """
         Compute the global heat map for the given prompt, aggregating across time (inference steps) and space (different
         spatial transformer block heat maps).
@@ -156,9 +158,15 @@ class DiffusionHeatMapHooker(AggregateHooker):
             factors = set(factors)
 
         all_merges = []
-
-        for factors_to_heat_maps in heat_maps:
+        
+        for batch_to_heat_maps in heat_maps:
+            
+            if not (batch_index in batch_to_heat_maps):
+                continue    
+            
             merge_list = []
+                 
+            factors_to_heat_maps = batch_to_heat_maps[batch_index]
 
             for k, heat_map in factors_to_heat_maps.items():
                 # heat_map shape: (tokens, 1, height, width)
@@ -176,7 +184,7 @@ class DiffusionHeatMapHooker(AggregateHooker):
 
 
 class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
-    def __init__(self, module: CrossAttention, img_height : int, img_width : int, heat_maps: defaultdict, context_size: int = 77, weighted: bool = False, head_idx: int = 0):
+    def __init__(self, module: CrossAttention, img_height : int, img_width : int, heat_maps: defaultdict(defaultdict), context_size: int = 77, weighted: bool = False, head_idx: int = 0):
         super().__init__(module)
         self.heat_maps = heat_maps
         self.context_size = context_size
@@ -265,7 +273,7 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             mask = repeat(mask, 'b j -> (b h) () j', h=h)
             sim.masked_fill_(~mask, max_neg_value)
         
-        out = hk_self._hooked_attention(self, q, k, v, sequence_length, dim)
+        out = hk_self._hooked_attention(self, q, k, v, batch_size, sequence_length, dim)
         
         return self.to_out(out)
     
@@ -303,7 +311,7 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
     #     hidden_states = self.to_out[1](hidden_states)
     #     return hidden_states
 
-    def _hooked_attention(hk_self, self, query, key, value, sequence_length, dim, use_context: bool = True):
+    def _hooked_attention(hk_self, self, query, key, value, batch_size, sequence_length, dim, use_context: bool = True):
         """
         Monkey-patched version of :py:func:`.CrossAttention._attention` to capture attentions and aggregate them.
 
@@ -313,13 +321,14 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             query (`torch.Tensor`): the query tensor.
             key (`torch.Tensor`): the key tensor.
             value (`torch.Tensor`): the value tensor.
+            batch_size (`int`): the batch size
             use_context (`bool`): whether to check if the resulting attention slices are between the words and the image
         """
         batch_size_attention = query.shape[0]
         hidden_states = torch.zeros(
             (batch_size_attention, sequence_length, dim // self.heads), device=query.device, dtype=query.dtype
         )
-        slice_size = hidden_states.shape[0] # self._slice_size if self._slice_size is not None else hidden_states.shape[0]
+        slice_size = hidden_states.shape[0] // batch_size # self._slice_size if self._slice_size is not None else hidden_states.shape[0]
         
         def calc_factor_base(w, h):
             z = max(w/64, h/64)
@@ -327,11 +336,10 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             return factor_b
         
         factor_base = calc_factor_base(hk_self.img_width, hk_self.img_height)
-        
-        
-        for i in range(hidden_states.shape[0] // slice_size):
-            start_idx = i * slice_size
-            end_idx = (i + 1) * slice_size
+                
+        for batch_index in range(hidden_states.shape[0] // slice_size):
+            start_idx = batch_index * slice_size
+            end_idx = (batch_index + 1) * slice_size
             attn_slice = (
                     torch.einsum("b i d, b j d -> b i j", query[start_idx:end_idx], key[start_idx:end_idx]) * self.scale
             )
@@ -340,10 +348,10 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             hid_states = torch.einsum("b i j, b j d -> b i d", attn_slice, value[start_idx:end_idx])            
                 
             if use_context and  hk_self.calledCount % 2 == 1 and attn_slice.shape[-1] == hk_self.context_size:    
-                if factor >= 1: # shape: (batch_size, 64 // factor, 64 // factor, 77)
+                if factor >= 1:
                     factor //= 1
                     maps = hk_self._up_sample_attn(attn_slice, value, factor)
-                    hk_self.heat_maps[factor].append(maps)
+                    hk_self.heat_maps[batch_index][factor].append(maps)
 
             hidden_states[start_idx:end_idx] = hid_states
 
