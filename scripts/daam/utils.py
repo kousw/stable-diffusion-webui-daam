@@ -7,6 +7,7 @@ import re
 from PIL import Image, ImageFont, ImageDraw
 from fonts.ttf import Roboto
 import matplotlib.pyplot as plt
+from matplotlib import cm
 import numpy as np
 # import spacy
 import torch
@@ -77,30 +78,8 @@ def image_overlay_heat_map(img, heat_map, word=None, out_file=None, crop=None, a
     
 
 def _convert_heat_map_colors(heat_map : torch.Tensor):
-    
-    color_gradients = np.array([
-        [0, 0.0, 0.0, 0.0],  # Black
-        [0.25, 0.0, 0.0, 1.0],  # Blue
-        [0.5, 0.0, 1.0, 0.0],  # Green
-        [0.75, 1.0, 1.0, 0.0],  # Yellow
-        [1.0, 1.0, 0.0, 0.0],  # Red
-    ])
-    
-    def percentile(a, b, percentile):
-        return ((1.0 - percentile) * a + percentile * b)
-    
     def get_color(value):
-        for idx, v in enumerate(color_gradients):
-            if value <= v[0] * 255:
-                if idx == 0:
-                    return v[1:]
-                else:
-                    current = color_gradients[idx]
-                    prev = color_gradients[idx-1]
-                    p = (current[0] * 255 - value) / (current[0] * 255 - prev[0] * 255)
-                    return percentile(current[1:],  prev[1:], p)
-        
-        return color_gradients[0][1:]
+        return np.array(cm.turbo(value / 255)[0:3])
     
     color_map = np.array([ get_color(i) * 255 for i in range(256) ])
     color_map = torch.tensor(color_map, device=heat_map.device)
