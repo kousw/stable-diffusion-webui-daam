@@ -11,6 +11,7 @@ import numpy as np
 # import spacy
 import torch
 import torch.nn.functional as F
+from modules.devices import dtype
 
 from ldm.modules.encoders.modules import FrozenCLIPEmbedder, FrozenOpenCLIPEmbedder
 import open_clip.tokenizer
@@ -103,7 +104,7 @@ def _convert_heat_map_colors(heat_map : torch.Tensor):
         return color_gradients[0][1:]
     
     color_map = np.array([ get_color(i) * 255 for i in range(256) ])
-    color_map = torch.tensor(color_map, device=heat_map.device)
+    color_map = torch.tensor(color_map, device=heat_map.device, dtype=dtype)
     
     heat_map = (heat_map * 255).long()
     
