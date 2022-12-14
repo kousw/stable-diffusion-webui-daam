@@ -11,6 +11,7 @@ import torch
 from ldm.modules.encoders.modules import FrozenCLIPEmbedder, FrozenOpenCLIPEmbedder
 import open_clip.tokenizer
 from modules import script_callbacks
+from modules import script_callbacks, sd_hijack_clip, sd_hijack_open_clip
 from modules.processing import (Processed, StableDiffusionProcessing, fix_seed,
                                 process_images)
 from modules.shared import cmd_opts, opts, state
@@ -69,6 +70,8 @@ class Script(scripts.Script):
             grid_layouyt :str,
             alpha : float, 
             heatmap_image_scale : float):
+                
+        assert opts.samples_save, "Cannot run Daam script. Enable 'Always save all generated images' setting."
 
         initial_info = None
         self.images = []
@@ -87,6 +90,13 @@ class Script(scripts.Script):
         attentions = [ s.strip() for s in attention_texts.split(",") if s.strip() ]
         self.attentions = attentions
         
+        embedder = None
+        if type(p.sd_model.cond_stage_model) == sd_hijack_clip.FrozenCLIPEmbedderWithCustomWords or \
+            type(p.sd_model.cond_stage_model) == sd_hijack_open_clip.FrozenOpenCLIPEmbedderWithCustomWords:
+            embedder = p.sd_model.cond_stage_model  
+        else:
+            assert False, f"Embedder '{type(p.sd_model.cond_stage_model)}' is not supported."
+            
         clip = None
         tokenize = None
         if type(p.sd_model.cond_stage_model.wrapped) == FrozenCLIPEmbedder:
@@ -99,11 +109,20 @@ class Script(scripts.Script):
             assert False
             
         tokens = tokenize(utils.escape_prompt(styled_prompt))
-        len_check = 0 if (len(tokens) - 1) < 0 else len(tokens) - 1
-        context_size = ((int)(len_check // 75) + 1) * 77
+        context_size = utils.calc_context_size(len(tokens))
         
-        print("daam run with context_size=", context_size)
+        prompt_analyzer = utils.PromptAnalyzer(embedder, styled_prompt)
+        self.prompt_analyzer = prompt_analyzer
+        context_size = prompt_analyzer.context_size
+               
+        print(f"daam run with context_size={prompt_analyzer.context_size}, token_count={prompt_analyzer.token_count}")
+        print(f"remade_tokens={prompt_analyzer.tokens}, multipliers={prompt_analyzer.multipliers}")
+        print(f"hijack_comments={prompt_analyzer.hijack_comments}, used_custom_terms={prompt_analyzer.used_custom_terms}")
+        print(f"fixes={prompt_analyzer.fixes}")
         
+        if any(item[0] in attentions for item in self.prompt_analyzer.used_custom_terms):
+            print("Embedding heatmap cannot be shown.")
+            
         global before_image_saved_handler
         before_image_saved_handler = lambda params : self.before_image_saved(params)
                 
@@ -159,7 +178,7 @@ class Script(scripts.Script):
         if self.tracer is not None and len(self.attentions) > 0:
             with torch.no_grad():
                 styled_prompot = shared.prompt_styles.apply_styles_to_prompt(params.p.prompt, params.p.styles)
-                global_heat_map = self.tracer.compute_global_heat_map(styled_prompot, batch_pos)                
+                global_heat_map = self.tracer.compute_global_heat_map(self.prompt_analyzer, styled_prompot, batch_pos)              
                 
                 if global_heat_map is not None:
                     grid_images = []

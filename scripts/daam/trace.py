@@ -19,7 +19,7 @@ from einops import rearrange, repeat
 
 from .experiment import COCO80_LABELS
 from .hook import ObjectHooker, AggregateHooker, UNetCrossAttentionLocator
-from .utils import compute_token_merge_indices
+from .utils import compute_token_merge_indices, PromptAnalyzer
 
 
 __all__ = ['trace', 'DiffusionHeatMapHooker', 'HeatMap', 'MmDetectHeatMap']
@@ -46,13 +46,13 @@ class UNetForwardHooker(ObjectHooker[UNetModel]):
 
 
 class HeatMap:
-    def __init__(self, model: Any, prompt: str, heat_maps: torch.Tensor):
-        self.tokenizer = model
+    def __init__(self, prompt_analyzer: PromptAnalyzer, prompt: str, heat_maps: torch.Tensor):
+        self.prompt_analyzer = prompt_analyzer.create(prompt)
         self.heat_maps = heat_maps
         self.prompt = prompt
 
     def compute_word_heat_map(self, word: str, word_idx: int = None) -> torch.Tensor:
-        merge_idxs = compute_token_merge_indices(self.tokenizer, self.prompt, word, word_idx)
+        merge_idxs, _ = self.prompt_analyzer.calc_word_indecies(word)
         if len(merge_idxs) == 0:
             return None
         
@@ -119,8 +119,8 @@ class DiffusionHeatMapHooker(AggregateHooker):
         map(lambda module: module.reset(), self.module)
         return self.forward_hook.all_heat_maps.clear()
 
-    def compute_global_heat_map(self, prompt, batch_index, time_weights=None, time_idx=None, last_n=None, first_n=None, factors=None):
-        # type: (str, int, int, int, int, int, List[float]) -> HeatMap
+    def compute_global_heat_map(self, prompt_analyzer, prompt, batch_index, time_weights=None, time_idx=None, last_n=None, first_n=None, factors=None):
+        # type: (PromptAnalyzer, str, int, int, int, int, int, List[float]) -> HeatMap
         """
         Compute the global heat map for the given prompt, aggregating across time (inference steps) and space (different
         spatial transformer block heat maps).
@@ -181,7 +181,7 @@ class DiffusionHeatMapHooker(AggregateHooker):
         maps = torch.stack([torch.stack(x, 0) for x in all_merges], dim=0)
         maps = maps.sum(0).to(device).sum(2).sum(0)
 
-        return HeatMap(self.model, prompt, maps)
+        return HeatMap(prompt_analyzer, prompt, maps)
 
 
 class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):

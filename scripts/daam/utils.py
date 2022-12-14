@@ -16,10 +16,11 @@ from modules.devices import dtype
 
 from ldm.modules.encoders.modules import FrozenCLIPEmbedder, FrozenOpenCLIPEmbedder
 import open_clip.tokenizer
+from modules.sd_hijack_clip import FrozenCLIPEmbedderWithCustomWordsBase, FrozenCLIPEmbedderWithCustomWords
+from modules.sd_hijack_open_clip import FrozenOpenCLIPEmbedderWithCustomWords
+from modules.shared import opts
 
-
-__all__ = ['expand_image', 'set_seed', 'escape_prompt', 'compute_token_merge_indices', 'image_overlay_heat_map', 'plot_overlay_heat_map', 'plot_mask_heat_map']
-
+__all__ = ['expand_image', 'set_seed', 'escape_prompt', 'calc_context_size', 'compute_token_merge_indices', 'compute_token_merge_indices_with_tokenizer', 'image_overlay_heat_map', 'plot_overlay_heat_map', 'plot_mask_heat_map', 'PromptAnalyzer']
 
 def expand_image(im: torch.Tensor, h = 512, w = 512,  absolute: bool = False, threshold: float = None) -> torch.Tensor:
 
@@ -129,11 +130,22 @@ def set_seed(seed: int) -> torch.Generator:
 
     return gen
 
-def escape_prompt(prompt :str):
-    prompt = prompt.lower()
-    prompt = re.sub(r"[\(\)\[\]]", "", prompt)
-    prompt = re.sub(r":\d+\.*\d*", "", prompt)
-    return prompt
+def calc_context_size(token_length : int):
+    len_check = 0 if (token_length - 1) < 0 else token_length - 1
+    return ((int)(len_check // 75) + 1) * 77
+
+def escape_prompt(prompt):
+    if type(prompt) is str:    
+        prompt = prompt.lower()
+        prompt = re.sub(r"[\(\)\[\]]", "", prompt)
+        prompt = re.sub(r":\d+\.*\d*", "", prompt)
+        return prompt
+    elif type(prompt) is list:
+        prompt_new = []
+        for i in range(len(prompt)):
+            prompt_new.append(escape_prompt(prompt[i]))
+        return prompt_new
+    
 
 def compute_token_merge_indices(model, prompt: str, word: str, word_idx: int = None):
         
@@ -186,6 +198,59 @@ def compute_token_merge_indices(model, prompt: str, word: str, word_idx: int = N
 
     return idxs
 
+def compute_token_merge_indices_with_tokenizer(tokenizer, prompt: str, word: str, word_idx: int = None, limit : int = -1):
+        
+    escaped_prompt = escape_prompt(prompt)
+    # escaped_prompt = re.sub(r"[_-]", " ", escaped_prompt)
+    tokens : list = tokenizer.tokenize(escaped_prompt)
+    word = word.lower()
+    merge_idxs = []
+    
+    print("tokens", tokens)
+    
+    needles = tokenizer.tokenize(word)
+    
+    print("needles", needles)
+    
+    if len(needles) == 0:
+        return []
+        
+    limit_count = 0
+    for i, token in enumerate(tokens):
+        if needles[0] == token and len(needles) > 1:
+            next = i + 1
+            success = True
+            for needle in needles[1:]:
+                if next >= len(tokens) or needle != tokens[next]:
+                    success = False
+                    break
+                next += 1
+            
+            # append consecutive indexes if all pass
+            if success:
+                merge_idxs.extend(list(range(i, next)))
+                if limit > 0:
+                    limit_count += 1
+                    if limit_count >= limit:
+                        break
+            
+        elif needles[0] == token:
+            merge_idxs.append(i)
+            if limit > 0:
+                limit_count += 1
+                if limit_count >= limit:
+                    break
+            
+    idxs = []
+    for x in merge_idxs:
+        seq = (int)(x / 75)
+        if seq == 0:
+            idxs.append(x + 1) # padding
+        else:
+            idxs.append(x + 1 + seq*2) # If tokens exceed 75, they are split.
+
+    return idxs
+
 nlp = None
 
 
@@ -197,3 +262,82 @@ def cached_nlp(prompt: str, type='en_core_web_md'):
 #       nlp = spacy.load(type)
 
     return nlp(prompt)
+
+class PromptAnalyzer:
+    def __init__(self, clip : FrozenCLIPEmbedderWithCustomWordsBase, text : str):
+        use_old = opts.use_old_emphasis_implementation
+        assert not use_old, "use_old_emphasis_implementation is not supported"
+        
+        self.clip = clip
+        self.id_start = clip.id_start
+        self.id_end = clip.id_end
+        self.is_open_clip = True if type(clip) == FrozenOpenCLIPEmbedderWithCustomWords else False
+        self.used_custom_terms = []
+        self.hijack_comments = []             
+        
+        remade_tokens, fixes, multipliers, token_count = self.tokenize_line(text, used_custom_terms=self.used_custom_terms, hijack_comments=self.hijack_comments)
+                  
+        self.token_count = token_count
+        self.fixes = fixes
+        self.context_size = calc_context_size(token_count)
+        
+        self.tokens = []
+        self.multipliers = []
+        for i in range(self.context_size // 77):
+            self.tokens.extend([self.id_start] + remade_tokens[i*75:i*75+75] + [self.id_end])
+            self.multipliers.extend([1.0] + multipliers[i*75:i*75+75]+ [1.0])
+            
+    def create(self, text : str):
+        return PromptAnalyzer(self.clip, text)
+            
+    def tokenize_line(self, line, used_custom_terms, hijack_comments):
+        remade_tokens, fixes, multipliers, token_count = self.clip.tokenize_line(line, used_custom_terms, hijack_comments)
+        return remade_tokens, fixes, multipliers, token_count
+    
+    def process_text(self, texts):       
+        batch_multipliers, remade_batch_tokens, used_custom_terms, hijack_comments, hijack_fixes, token_count = self.clip.process_text(texts)        
+        return batch_multipliers, remade_batch_tokens, used_custom_terms, hijack_comments, hijack_fixes, token_count
+        
+    def encode(self, text : str):
+        return self.clip.tokenize([text])[0]
+    
+    def calc_word_indecies(self, word : str, limit : int = -1, start_pos = 0):
+        word = word.lower()
+        merge_idxs = []
+            
+        tokens = self.tokens   
+        needles = self.encode(word)
+        print('tokens, needles', tokens, needles)
+            
+        limit_count = 0
+        current_pos = 0
+        for i, token in enumerate(tokens):
+            current_pos = i
+            if i < start_pos:
+                continue            
+            
+            if needles[0] == token and len(needles) > 1:
+                next = i + 1
+                success = True
+                for needle in needles[1:]:
+                    if next >= len(tokens) or needle != tokens[next]:
+                        success = False
+                        break
+                    next += 1
+                
+                # append consecutive indexes if all pass
+                if success:
+                    merge_idxs.extend(list(range(i, next)))
+                    if limit > 0:
+                        limit_count += 1
+                        if limit_count >= limit:
+                            break
+                
+            elif needles[0] == token:
+                merge_idxs.append(i)
+                if limit > 0:
+                    limit_count += 1
+                    if limit_count >= limit:
+                        break
+        
+        return merge_idxs, current_pos
