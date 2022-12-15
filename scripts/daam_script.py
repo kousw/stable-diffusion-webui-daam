@@ -42,6 +42,8 @@ class Script(scripts.Script):
         with gr.Row():
             hide_images = gr.Checkbox(label='Hide heatmap images', value=False)
             
+            dont_save_images = gr.Checkbox(label='Do not save heatmap images', value=False)
+            
             hide_caption = gr.Checkbox(label='Hide caption', value=False)
             
         with gr.Row():
@@ -59,12 +61,13 @@ class Script(scripts.Script):
         
         self.tracer = None
         
-        return [attention_texts, hide_images, hide_caption, use_grid, grid_layouyt, alpha, heatmap_image_scale] 
+        return [attention_texts, hide_images, dont_save_images, hide_caption, use_grid, grid_layouyt, alpha, heatmap_image_scale] 
     
     def run(self,
             p : StableDiffusionProcessing, 
             attention_texts : str, 
             hide_images : bool, 
+            dont_save_images : bool,
             hide_caption : bool, 
             use_grid : bool, 
             grid_layouyt :str,
@@ -76,6 +79,7 @@ class Script(scripts.Script):
         initial_info = None
         self.images = []
         self.hide_images = hide_images
+        self.dont_save_images = dont_save_images
         self.hide_caption = hide_caption
         self.alpha = alpha
         self.use_grid = use_grid
@@ -155,7 +159,9 @@ class Script(scripts.Script):
             else:
                 pass
             
-            images.save_image(grid_img, p.outpath_grids, "grid_daam", grid=True, p=p)
+            if not self.dont_save_images:
+                images.save_image(grid_img, p.outpath_grids, "grid_daam", grid=True, p=p)
+            
             if not self.hide_images:
                 self.images += [grid_img]
 
@@ -198,8 +204,9 @@ class Script(scripts.Script):
                         
                         if self.use_grid:
                             grid_images.append(img)
-                        else:                  
-                            img.save(full_filename)
+                        else:
+                            if not self.dont_save_images:               
+                                img.save(full_filename)
                             
                             if not self.hide_images:
                                 self.images += [img]
