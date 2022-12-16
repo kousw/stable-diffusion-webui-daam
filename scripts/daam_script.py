@@ -120,9 +120,9 @@ class Script(scripts.Script):
         context_size = prompt_analyzer.context_size
                
         print(f"daam run with context_size={prompt_analyzer.context_size}, token_count={prompt_analyzer.token_count}")
-        print(f"remade_tokens={prompt_analyzer.tokens}, multipliers={prompt_analyzer.multipliers}")
-        print(f"hijack_comments={prompt_analyzer.hijack_comments}, used_custom_terms={prompt_analyzer.used_custom_terms}")
-        print(f"fixes={prompt_analyzer.fixes}")
+        # print(f"remade_tokens={prompt_analyzer.tokens}, multipliers={prompt_analyzer.multipliers}")
+        # print(f"hijack_comments={prompt_analyzer.hijack_comments}, used_custom_terms={prompt_analyzer.used_custom_terms}")
+        # print(f"fixes={prompt_analyzer.fixes}")
         
         if any(item[0] in attentions for item in self.prompt_analyzer.used_custom_terms):
             print("Embedding heatmap cannot be shown.")
