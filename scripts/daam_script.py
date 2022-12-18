@@ -85,7 +85,7 @@ class Script(scripts.Script):
         self.use_grid = use_grid
         self.grid_layouyt = grid_layouyt
         self.heatmap_image_scale = heatmap_image_scale
-        self.grid_images = list()
+        self.heatmap_images = list()
         
         fix_seed(p)
         
@@ -134,38 +134,48 @@ class Script(scripts.Script):
             with trace(p.sd_model, p.height, p.width, context_size) as tr:
                 self.tracer = tr
                                
-                proc = process_images(p)
+                processed = process_images(p)
                 if initial_info is None:
-                    initial_info = proc.info
-                self.images  += proc.images        
+                    initial_info = processed.info
+                self.images  += processed.images        
                 
                 self.tracer = None        
 
         before_image_saved_handler = None
         
-        if self.use_grid and len(self.grid_images) > 0:
+        # processed = Processed(p, self.images, p.seed, initial_info)
+                
+        if len(self.heatmap_images) > 0:
+            
+            if self.use_grid:
 
-            grid_layout = self.grid_layouyt
-            if grid_layout == Script.GRID_LAYOUT_AUTO:
-                if p.batch_size * p.n_iter == 1:
-                    grid_layout = Script.GRID_LAYOUT_PREVENT_EMPTY
+                grid_layout = self.grid_layouyt
+                if grid_layout == Script.GRID_LAYOUT_AUTO:
+                    if p.batch_size * p.n_iter == 1:
+                        grid_layout = Script.GRID_LAYOUT_PREVENT_EMPTY
+                    else:
+                        grid_layout = Script.GRID_LAYOUT_BATCH_LENGTH_AS_ROW
+                        
+                if grid_layout == Script.GRID_LAYOUT_PREVENT_EMPTY:
+                    grid_img = images.image_grid(self.heatmap_images)
+                elif grid_layout == Script.GRID_LAYOUT_BATCH_LENGTH_AS_ROW:
+                    grid_img = images.image_grid(self.heatmap_images, batch_size=p.batch_size, rows=p.batch_size * p.n_iter)
                 else:
-                    grid_layout = Script.GRID_LAYOUT_BATCH_LENGTH_AS_ROW
-                       
-            if grid_layout == Script.GRID_LAYOUT_PREVENT_EMPTY:
-                grid_img = images.image_grid(self.grid_images)
-            elif grid_layout == Script.GRID_LAYOUT_BATCH_LENGTH_AS_ROW:
-                grid_img = images.image_grid(self.grid_images, batch_size=p.batch_size, rows=p.batch_size * p.n_iter)
+                    pass
+                
+                if not self.dont_save_images:
+                    images.save_image(grid_img, p.outpath_grids, "grid_daam", grid=True, p=p)
+                
+                if not self.hide_images:
+                    processed.images.insert(0, grid_img)
+                    processed.index_of_first_image += 1
+                    processed.infotexts.insert(0, processed.infotexts[0])
+            
             else:
-                pass
-            
-            if not self.dont_save_images:
-                images.save_image(grid_img, p.outpath_grids, "grid_daam", grid=True, p=p)
-            
-            if not self.hide_images:
-                self.images += [grid_img]
-
-        processed = Processed(p, self.images, p.seed, initial_info)
+                if not self.hide_images:
+                    processed.images[:0] = self.heatmap_images
+                    processed.index_of_first_image += len(self.heatmap_images)
+                    processed.infotexts[:0] = [processed.infotexts[0]] * len(self.heatmap_images)
 
         return processed
     
@@ -187,7 +197,7 @@ class Script(scripts.Script):
                 global_heat_map = self.tracer.compute_global_heat_map(self.prompt_analyzer, styled_prompot, batch_pos)              
                 
                 if global_heat_map is not None:
-                    grid_images = []
+                    heatmap_images = []
                     for attention in self.attentions:
                                 
                         img_size = params.image.size
@@ -203,16 +213,13 @@ class Script(scripts.Script):
                         full_filename = fullfn_without_extension + "_" + attention + extension
                         
                         if self.use_grid:
-                            grid_images.append(img)
+                            heatmap_images.append(img)
                         else:
+                            heatmap_images.append(img)
                             if not self.dont_save_images:               
-                                img.save(full_filename)
-                            
-                            if not self.hide_images:
-                                self.images += [img]
+                                img.save(full_filename)                            
                     
-                    if self.use_grid:
-                        self.grid_images += grid_images
+                    self.heatmap_images += heatmap_images
         
         # if it is last batch pos, clear heatmaps
         if batch_pos == params.p.batch_size - 1:
