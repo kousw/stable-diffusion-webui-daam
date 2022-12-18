@@ -206,11 +206,7 @@ def compute_token_merge_indices_with_tokenizer(tokenizer, prompt: str, word: str
     word = word.lower()
     merge_idxs = []
     
-    print("tokens", tokens)
-    
     needles = tokenizer.tokenize(word)
-    
-    print("needles", needles)
     
     if len(needles) == 0:
         return []
@@ -307,7 +303,6 @@ class PromptAnalyzer:
             
         tokens = self.tokens   
         needles = self.encode(word)
-        print('tokens, needles', tokens, needles)
             
         limit_count = 0
         current_pos = 0
