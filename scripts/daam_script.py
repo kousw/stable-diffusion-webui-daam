@@ -33,37 +33,38 @@ class Script(scripts.Script):
         return "Daam script"
 
     def show(self, is_img2img):
-        return True
+        return scripts.AlwaysVisible
 
     def ui(self, is_img2img):
-                
-        attention_texts = gr.Text(label='Attention texts for visualization. (comma separated)', value='')
+        with gr.Group():
+            with gr.Accordion("Attention Heatmap", open=False):
+                attention_texts = gr.Text(label='Attention texts for visualization. (comma separated)', value='')
 
-        with gr.Row():
-            hide_images = gr.Checkbox(label='Hide heatmap images', value=False)
-            
-            dont_save_images = gr.Checkbox(label='Do not save heatmap images', value=False)
-            
-            hide_caption = gr.Checkbox(label='Hide caption', value=False)
-            
-        with gr.Row():
-            use_grid = gr.Checkbox(label='Use grid (output to grid dir)', value=False)
+                with gr.Row():
+                    hide_images = gr.Checkbox(label='Hide heatmap images', value=False)
+                    
+                    dont_save_images = gr.Checkbox(label='Do not save heatmap images', value=False)
+                    
+                    hide_caption = gr.Checkbox(label='Hide caption', value=False)
+                    
+                with gr.Row():
+                    use_grid = gr.Checkbox(label='Use grid (output to grid dir)', value=False)
+                        
+                    grid_layouyt = gr.Dropdown(
+                            [Script.GRID_LAYOUT_AUTO, Script.GRID_LAYOUT_PREVENT_EMPTY, Script.GRID_LAYOUT_BATCH_LENGTH_AS_ROW], label="Grid layout",
+                            value=Script.GRID_LAYOUT_AUTO
+                        )
+                        
+                with gr.Row():
+                    alpha = gr.Slider(label='Heatmap blend alpha', value=0.5, minimum=0, maximum=1, step=0.01)
                 
-            grid_layouyt = gr.Dropdown(
-                    [Script.GRID_LAYOUT_AUTO, Script.GRID_LAYOUT_PREVENT_EMPTY, Script.GRID_LAYOUT_BATCH_LENGTH_AS_ROW], label="Grid layout",
-                    value=Script.GRID_LAYOUT_AUTO
-                )
-                
-        with gr.Row():
-            alpha = gr.Slider(label='Heatmap blend alpha', value=0.5, minimum=0, maximum=1, step=0.01)
-        
-            heatmap_image_scale = gr.Slider(label='Heatmap image scale', value=1.0, minimum=0.1, maximum=1, step=0.025)
+                    heatmap_image_scale = gr.Slider(label='Heatmap image scale', value=1.0, minimum=0.1, maximum=1, step=0.025)
         
         self.tracer = None
         
         return [attention_texts, hide_images, dont_save_images, hide_caption, use_grid, grid_layouyt, alpha, heatmap_image_scale] 
     
-    def run(self,
+    def process(self, 
             p : StableDiffusionProcessing, 
             attention_texts : str, 
             hide_images : bool, 
@@ -73,10 +74,9 @@ class Script(scripts.Script):
             grid_layouyt :str,
             alpha : float, 
             heatmap_image_scale : float):
-                
+        self.enabled = False # in case the assert fails
         assert opts.samples_save, "Cannot run Daam script. Enable 'Always save all generated images' setting."
 
-        initial_info = None
         self.images = []
         self.hide_images = hide_images
         self.dont_save_images = dont_save_images
@@ -86,13 +86,27 @@ class Script(scripts.Script):
         self.grid_layouyt = grid_layouyt
         self.heatmap_image_scale = heatmap_image_scale
         self.heatmap_images = list()
+
+        self.attentions = [s.strip() for s in attention_texts.split(",") if s.strip()]
+        self.enabled = len(self.attentions) > 0
         
-        fix_seed(p)
+    def process_batch(self,
+            p : StableDiffusionProcessing, 
+            attention_texts : str, 
+            hide_images : bool, 
+            dont_save_images : bool,
+            hide_caption : bool, 
+            use_grid : bool, 
+            grid_layouyt :str,
+            alpha : float, 
+            heatmap_image_scale : float,
+            prompts,
+            **kwargs):
+                
+        if not self.enabled:
+            return
         
-        styled_prompt = shared.prompt_styles.apply_styles_to_prompt(p.prompt, p.styles)
-        
-        attentions = [ s.strip() for s in attention_texts.split(",") if s.strip() ]
-        self.attentions = attentions
+        styled_prompt = prompts[0]         
         
         embedder = None
         if type(p.sd_model.cond_stage_model) == sd_hijack_clip.FrozenCLIPEmbedderWithCustomWords or \
@@ -124,27 +138,33 @@ class Script(scripts.Script):
         # print(f"hijack_comments={prompt_analyzer.hijack_comments}, used_custom_terms={prompt_analyzer.used_custom_terms}")
         # print(f"fixes={prompt_analyzer.fixes}")
         
-        if any(item[0] in attentions for item in self.prompt_analyzer.used_custom_terms):
+        if any(item[0] in self.attentions for item in self.prompt_analyzer.used_custom_terms):
             print("Embedding heatmap cannot be shown.")
             
         global before_image_saved_handler
         before_image_saved_handler = lambda params : self.before_image_saved(params)
-                
-        with torch.no_grad():
-            with trace(p.sd_model, p.height, p.width, context_size) as tr:
-                self.tracer = tr
-                               
-                processed = process_images(p)
-                if initial_info is None:
-                    initial_info = processed.info
-                self.images  += processed.images        
-                
-                self.tracer = None        
 
-        before_image_saved_handler = None
+        self.tracer = trace(p.sd_model, p.height, p.width, context_size).hook()
         
-        # processed = Processed(p, self.images, p.seed, initial_info)
-                
+    def postprocess(self, p, processed, *args, **kwargs):
+        if self.enabled == False:
+            return
+        
+        if self.tracer is not None:
+            self.tracer.unhook()
+            self.tracer = None
+        
+        initial_info = None
+
+        if initial_info is None:
+            initial_info = processed.info
+            
+        self.images += processed.images
+
+        global before_image_saved_handler
+        before_image_saved_handler = None
+
+
         if len(self.heatmap_images) > 0:
             
             if self.use_grid:
@@ -225,12 +245,6 @@ class Script(scripts.Script):
         if batch_pos == params.p.batch_size - 1:
             self.tracer.reset()
             
-        return
-
-    def process(self, p, *args):
-        return 
-
-    def postprocess(self, *args):
         return
 
 
