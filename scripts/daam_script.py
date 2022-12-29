@@ -215,7 +215,6 @@ class Script(scripts.Script):
                     try:
                         global_heat_map = tracer.compute_global_heat_map(self.prompt_analyzer, styled_prompot, batch_pos)              
                     except:
-                        print(f'ERROR on i={i}')
                         continue
                     
                     if global_heat_map is not None:
