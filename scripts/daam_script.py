@@ -58,10 +58,13 @@ class Script(scripts.Script):
             alpha = gr.Slider(label='Heatmap blend alpha', value=0.5, minimum=0, maximum=1, step=0.01)
         
             heatmap_image_scale = gr.Slider(label='Heatmap image scale', value=1.0, minimum=0.1, maximum=1, step=0.025)
+
+        with gr.Row():
+            trace_each_layers = gr.Checkbox(label = 'Trace each layers', value=False)
         
-        self.tracer = None
+        self.tracers = None
         
-        return [attention_texts, hide_images, dont_save_images, hide_caption, use_grid, grid_layouyt, alpha, heatmap_image_scale] 
+        return [attention_texts, hide_images, dont_save_images, hide_caption, use_grid, grid_layouyt, alpha, heatmap_image_scale, trace_each_layers] 
     
     def run(self,
             p : StableDiffusionProcessing, 
@@ -72,7 +75,8 @@ class Script(scripts.Script):
             use_grid : bool, 
             grid_layouyt :str,
             alpha : float, 
-            heatmap_image_scale : float):
+            heatmap_image_scale : float,
+            trace_each_layers : bool):
                 
         assert opts.samples_save, "Cannot run Daam script. Enable 'Always save all generated images' setting."
 
@@ -131,15 +135,28 @@ class Script(scripts.Script):
         before_image_saved_handler = lambda params : self.before_image_saved(params)
                 
         with torch.no_grad():
-            with trace(p.sd_model, p.height, p.width, context_size) as tr:
-                self.tracer = tr
-                               
-                processed = process_images(p)
-                if initial_info is None:
-                    initial_info = processed.info
-                self.images  += processed.images        
-                
-                self.tracer = None        
+            # cannot trace the same block from two tracers
+            if trace_each_layers:
+                num_input = len(p.sd_model.model.diffusion_model.input_blocks)
+                num_output = len(p.sd_model.model.diffusion_model.output_blocks)
+                self.tracers = [trace(p.sd_model, p.height, p.width, context_size, layer_idx=i) for i in range(num_input + num_output + 1)]
+                self.attn_captions = [f"IN{i:02d}" for i in range(num_input)] + ["MID"] + [f"OUT{i:02d}" for i in range(num_output)]
+            else:
+                self.tracers = [trace(p.sd_model, p.height, p.width, context_size)]
+                self.attn_captions = [""]
+            
+            for tracer in self.tracers:
+                tracer.hook()
+            
+            processed = process_images(p)
+            if initial_info is None:
+                initial_info = processed.info
+            self.images  += processed.images
+
+            for tracer in self.tracers:
+                tracer.unhook()
+            
+            self.tracers = None
 
         before_image_saved_handler = None
         
@@ -191,39 +208,45 @@ class Script(scripts.Script):
         if batch_pos < 0:
             return        
         
-        if self.tracer is not None and len(self.attentions) > 0:
-            with torch.no_grad():
-                styled_prompot = shared.prompt_styles.apply_styles_to_prompt(params.p.prompt, params.p.styles)
-                global_heat_map = self.tracer.compute_global_heat_map(self.prompt_analyzer, styled_prompot, batch_pos)              
-                
-                if global_heat_map is not None:
-                    heatmap_images = []
-                    for attention in self.attentions:
-                                
-                        img_size = params.image.size
-                        caption = attention if not self.hide_caption else None
-                        
-                        heat_map = global_heat_map.compute_word_heat_map(attention)
-                        if heat_map is None : print(f"No heatmaps for '{attention}'")
-                        
-                        heat_map_img = utils.expand_image(heat_map, img_size[1], img_size[0]) if heat_map is not None else None
-                        img : Image.Image = utils.image_overlay_heat_map(params.image, heat_map_img, alpha=self.alpha, caption=caption, image_scale=self.heatmap_image_scale)
-                        
-                        fullfn_without_extension, extension = os.path.splitext(params.filename) 
-                        full_filename = fullfn_without_extension + "_" + attention + extension
-                        
-                        if self.use_grid:
-                            heatmap_images.append(img)
-                        else:
-                            heatmap_images.append(img)
-                            if not self.dont_save_images:               
-                                img.save(full_filename)                            
+        if self.tracers is not None and len(self.attentions) > 0:
+            for i, tracer in enumerate(self.tracers):
+                with torch.no_grad():
+                    styled_prompot = shared.prompt_styles.apply_styles_to_prompt(params.p.prompt, params.p.styles)
+                    try:
+                        global_heat_map = tracer.compute_global_heat_map(self.prompt_analyzer, styled_prompot, batch_pos)              
+                    except:
+                        print(f'ERROR on i={i}')
+                        continue
                     
-                    self.heatmap_images += heatmap_images
+                    if global_heat_map is not None:
+                        heatmap_images = []
+                        for attention in self.attentions:
+                                    
+                            img_size = params.image.size
+                            caption = attention + (" " + self.attn_captions[i] if self.attn_captions[i] else "") if not self.hide_caption else None
+                            
+                            heat_map = global_heat_map.compute_word_heat_map(attention)
+                            if heat_map is None : print(f"No heatmaps for '{attention}'")
+                            
+                            heat_map_img = utils.expand_image(heat_map, img_size[1], img_size[0]) if heat_map is not None else None
+                            img : Image.Image = utils.image_overlay_heat_map(params.image, heat_map_img, alpha=self.alpha, caption=caption, image_scale=self.heatmap_image_scale)
+
+                            fullfn_without_extension, extension = os.path.splitext(params.filename) 
+                            full_filename = fullfn_without_extension + "_" + attention +  ("_" + self.attn_captions[i] if self.attn_captions[i] else "") + extension
+                            
+                            if self.use_grid:
+                                heatmap_images.append(img)
+                            else:
+                                heatmap_images.append(img)
+                                if not self.dont_save_images:               
+                                    img.save(full_filename)                            
+                        
+                        self.heatmap_images += heatmap_images
         
         # if it is last batch pos, clear heatmaps
         if batch_pos == params.p.batch_size - 1:
-            self.tracer.reset()
+            for tracer in self.tracers:
+                tracer.reset()
             
         return
 
