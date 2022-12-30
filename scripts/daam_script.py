@@ -143,7 +143,7 @@ class Script(scripts.Script):
                 num_input = len(p.sd_model.model.diffusion_model.input_blocks)
                 num_output = len(p.sd_model.model.diffusion_model.output_blocks)
                 self.tracers = [trace(p.sd_model, p.height, p.width, context_size, layer_idx=i) for i in range(num_input + num_output + 1)]
-                self.attn_captions = [f"IN{i:02d}" for i in range(num_input)] + ["MID"] + [f"OUT{i:02d}" for i in range(num_output)]
+                self.attn_captions = [f"IN{i:02d}" for i in range(num_input)] + [f"OUT{i:02d}" for i in range(num_output)] + ["MID"]
             else:
                 self.tracers = [trace(p.sd_model, p.height, p.width, context_size)]
                 self.attn_captions = [""]

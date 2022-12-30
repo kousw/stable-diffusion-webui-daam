@@ -96,27 +96,14 @@ class UNetCrossAttentionLocator(ModuleLocator[CrossAttention]):
             `List[CrossAttention]`: The list of cross-attention modules.
         """
         blocks = []
-
-        def append_block(unet_block, blocks):
-            for module in unet_block.modules():
-                if type(module) is SpatialTransformer:
-                    spatial_transformer = module
-                    for basic_transformer_block in spatial_transformer.transformer_blocks:
-                        blocks.append(basic_transformer_block.attn2)
-
-        num_layers = len(model.input_blocks)
         
-        for i, unet_block in enumerate(model.input_blocks):
+        for i, unet_block in enumerate(itertools.chain(model.input_blocks, model.output_blocks, [model.middle_block])):
             # if 'CrossAttn' in unet_block.__class__.__name__:
             if not layer_idx or i == layer_idx:
-                append_block(unet_block, blocks)
-        
-        if not layer_idx or layer_idx == num_layers:
-            append_block(model.middle_block, blocks)
-        
-        for i, unet_block in enumerate(model.output_blocks):
-            # if 'CrossAttn' in unet_block.__class__.__name__:
-            if not layer_idx or i == layer_idx - num_layers - 1:
-                append_block(unet_block, blocks)
+                for module in unet_block.modules():
+                    if type(module) is SpatialTransformer:
+                        spatial_transformer = module
+                        for basic_transformer_block in spatial_transformer.transformer_blocks:
+                            blocks.append(basic_transformer_block.attn2)
 
         return blocks
