@@ -97,7 +97,7 @@ class UNetCrossAttentionLocator(ModuleLocator[CrossAttention]):
         """
         blocks = []
         
-        for i, unet_block in enumerate(itertools.chain(model.input_blocks, model.output_blocks, [model.middle_block])):
+        for i, unet_block in enumerate(itertools.chain(model.input_blocks, [model.middle_block], model.output_blocks)):
             # if 'CrossAttn' in unet_block.__class__.__name__:
             if not layer_idx or i == layer_idx:
                 for module in unet_block.modules():
