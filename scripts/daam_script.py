@@ -61,10 +61,12 @@ class Script(scripts.Script):
 
         with gr.Row():
             trace_each_layers = gr.Checkbox(label = 'Trace each layers', value=False)
+
+            layers_as_row = gr.Checkbox(label = 'Use layers as row instead of Batch Length', value=False)
         
         self.tracers = None
         
-        return [attention_texts, hide_images, dont_save_images, hide_caption, use_grid, grid_layouyt, alpha, heatmap_image_scale, trace_each_layers] 
+        return [attention_texts, hide_images, dont_save_images, hide_caption, use_grid, grid_layouyt, alpha, heatmap_image_scale, trace_each_layers, layers_as_row] 
     
     def run(self,
             p : StableDiffusionProcessing, 
@@ -76,7 +78,8 @@ class Script(scripts.Script):
             grid_layouyt :str,
             alpha : float, 
             heatmap_image_scale : float,
-            trace_each_layers : bool):
+            trace_each_layers : bool,
+            layers_as_row: bool):
                 
         assert opts.samples_save, "Cannot run Daam script. Enable 'Always save all generated images' setting."
 
@@ -89,7 +92,7 @@ class Script(scripts.Script):
         self.use_grid = use_grid
         self.grid_layouyt = grid_layouyt
         self.heatmap_image_scale = heatmap_image_scale
-        self.heatmap_images = list()
+        self.heatmap_images = dict()
         
         fix_seed(p)
         
@@ -145,26 +148,39 @@ class Script(scripts.Script):
                 self.tracers = [trace(p.sd_model, p.height, p.width, context_size)]
                 self.attn_captions = [""]
             
-            for tracer in self.tracers:
-                tracer.hook()
             
-            processed = process_images(p)
-            if initial_info is None:
-                initial_info = processed.info
-            self.images  += processed.images
-
-            for tracer in self.tracers:
-                tracer.unhook()
+            try:
+                for tracer in self.tracers:
+                    tracer.hook()
+                processed = process_images(p)
+                if initial_info is None:
+                    initial_info = processed.info
+                self.images  += processed.images
+            except Exception as e:
+                print(e)
+            finally:
+                for tracer in self.tracers:
+                    tracer.unhook()
             
             self.tracers = None
 
         before_image_saved_handler = None
         
         # processed = Processed(p, self.images, p.seed, initial_info)
-                
-        if len(self.heatmap_images) > 0:
-            
-            if self.use_grid:
+
+        if layers_as_row:
+            images_list = []
+            for i in range(p.batch_size * p.n_iter):
+                imgs = []
+                for k in sorted(self.heatmap_images.keys()):
+                    imgs += [self.heatmap_images[k][len(self.attentions)*i + j] for j in range(len(self.attentions))]
+                images_list.append(imgs)
+        else:
+            images_list = [self.heatmap_images[k] for k in sorted(self.heatmap_images.keys())]
+
+        for img_list in images_list:
+
+            if img_list and self.use_grid:
 
                 grid_layout = self.grid_layouyt
                 if grid_layout == Script.GRID_LAYOUT_AUTO:
@@ -174,9 +190,15 @@ class Script(scripts.Script):
                         grid_layout = Script.GRID_LAYOUT_BATCH_LENGTH_AS_ROW
                         
                 if grid_layout == Script.GRID_LAYOUT_PREVENT_EMPTY:
-                    grid_img = images.image_grid(self.heatmap_images)
+                    grid_img = images.image_grid(img_list)
                 elif grid_layout == Script.GRID_LAYOUT_BATCH_LENGTH_AS_ROW:
-                    grid_img = images.image_grid(self.heatmap_images, batch_size=p.batch_size, rows=p.batch_size * p.n_iter)
+                    if layers_as_row:
+                        batch_size = len(self.attentions)
+                        rows = len(self.heatmap_images)
+                    else:
+                        batch_size = p.batch_size
+                        rows = p.batch_size * p.n_iter
+                    grid_img = images.image_grid(img_list, batch_size=batch_size, rows=rows)
                 else:
                     pass
                 
@@ -190,9 +212,9 @@ class Script(scripts.Script):
             
             else:
                 if not self.hide_images:
-                    processed.images[:0] = self.heatmap_images
-                    processed.index_of_first_image += len(self.heatmap_images)
-                    processed.infotexts[:0] = [processed.infotexts[0]] * len(self.heatmap_images)
+                    processed.images[:0] = img_list
+                    processed.index_of_first_image += len(img_list)
+                    processed.infotexts[:0] = [processed.infotexts[0]] * len(img_list)
 
         return processed
     
@@ -217,6 +239,9 @@ class Script(scripts.Script):
                     except:
                         continue
                     
+                    if i not in self.heatmap_images:
+                        self.heatmap_images[i] = []
+                    
                     if global_heat_map is not None:
                         heatmap_images = []
                         for attention in self.attentions:
@@ -240,8 +265,10 @@ class Script(scripts.Script):
                                 if not self.dont_save_images:               
                                     img.save(full_filename)                            
                         
-                        self.heatmap_images += heatmap_images
+                        self.heatmap_images[i] += heatmap_images
         
+        self.heatmap_images = {j:self.heatmap_images[j] for j in self.heatmap_images.keys() if self.heatmap_images[j]}
+
         # if it is last batch pos, clear heatmaps
         if batch_pos == params.p.batch_size - 1:
             for tracer in self.tracers:
