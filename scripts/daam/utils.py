@@ -1,4 +1,5 @@
 from __future__ import annotations
+from itertools import chain
 from functools import lru_cache
 from pathlib import Path
 import random
@@ -271,24 +272,27 @@ class PromptAnalyzer:
         self.used_custom_terms = []
         self.hijack_comments = []
 
-        remade_tokens, fixes, multipliers, token_count = self.tokenize_line(text, used_custom_terms=self.used_custom_terms, hijack_comments=self.hijack_comments)
+        chunks, token_count = self.tokenize_line(text)
 
         self.token_count = token_count
-        self.fixes = fixes
+        self.fixes = list(chain.from_iterable(chunk.fixes for chunk in chunks))
         self.context_size = calc_context_size(token_count)
+
+        tokens = list(chain.from_iterable(chunk.tokens for chunk in chunks))
+        multipliers = list(chain.from_iterable(chunk.multipliers for chunk in chunks))
 
         self.tokens = []
         self.multipliers = []
         for i in range(self.context_size // 77):
-            self.tokens.extend([self.id_start] + remade_tokens[i*75:i*75+75] + [self.id_end])
+            self.tokens.extend([self.id_start] + tokens[i*75:i*75+75] + [self.id_end])
             self.multipliers.extend([1.0] + multipliers[i*75:i*75+75]+ [1.0])
 
     def create(self, text : str):
         return PromptAnalyzer(self.clip, text)
 
-    def tokenize_line(self, line, used_custom_terms, hijack_comments):
-        remade_tokens, fixes, multipliers, token_count = self.clip.tokenize_line(line, used_custom_terms, hijack_comments)
-        return remade_tokens, fixes, multipliers, token_count
+    def tokenize_line(self, line):
+        chunks, token_count = self.clip.tokenize_line(line)
+        return chunks, token_count
 
     def process_text(self, texts):
         batch_multipliers, remade_batch_tokens, used_custom_terms, hijack_comments, hijack_fixes, token_count = self.clip.process_text(texts)
