@@ -170,21 +170,6 @@ class Script(scripts.Script):
         
             for tracer in self.tracers:
                 tracer.hook()
-            
-            # try:
-            #     for tracer in self.tracers:
-            #         tracer.hook()
-            #     processed = process_images(p)
-            #     if initial_info is None:
-            #         initial_info = processed.info
-            #     self.images  += processed.images
-            # except Exception as e:
-            #     print(e)
-            # finally:
-            #     for tracer in self.tracers:
-            #         tracer.unhook()
-            
-            # self.tracers = None
 
     def postprocess(self, p, processed,
             attention_texts : str, 
