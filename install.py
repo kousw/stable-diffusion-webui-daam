@@ -12,7 +12,8 @@ def check_matplotlib():
 
     if hasattr(matplotlib, "__version_info__"):
         version = matplotlib.__version_info__
-        return version.major >= 3 and version.minor >= 6 and version.micro >= 2
+        version = (version.major, version.minor, version.micro)
+        return version >= (3, 6, 2)
     return False
 
 
