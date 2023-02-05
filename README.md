@@ -29,7 +29,13 @@ output images: orginal, cat, sunglasses, beach
 <img src="images/00006-2623256163_sunglasses.png" width="150">
 <img src="images/00006-2623256163_beach.png" width="150">
 
+# Tutorial
+
+- [Easiest way to use DAAM script tutorial](https://www.youtube.com/watch?v=XiKyEKJrTLQ)
+
+[![image.png](https://s3.amazonaws.com/moonup/production/uploads/1675628788246-6345bd89fe134dfd7a0dba40.png)](https://www.youtube.com/watch?v=XiKyEKJrTLQ)
 
 # Notice
 At the moment, this works well with the Stable Diffusion 1.5 model.
 However, in the Stable Diffusion 2.0 model this seems to be working a little less well.
+
