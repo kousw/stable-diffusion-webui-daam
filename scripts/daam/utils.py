@@ -1,4 +1,5 @@
 from __future__ import annotations
+from itertools import chain
 from functools import lru_cache
 from pathlib import Path
 import random
@@ -56,38 +57,38 @@ def _write_on_image(img, caption, font_size = 32):
 def image_overlay_heat_map(img, heat_map, word=None, out_file=None, crop=None, alpha=0.5, caption=None, image_scale=1.0):
     # type: (Image.Image | np.ndarray, torch.Tensor, str, Path, int, float, str, float) -> Image.Image
     assert(img is not None)
-    
-    if heat_map is not None:   
+
+    if heat_map is not None:
         shape : torch.Size = heat_map.shape
         # heat_map = heat_map.unsqueeze(-1).expand(shape[0], shape[1], 3).clone()
         heat_map = _convert_heat_map_colors(heat_map)
         heat_map = heat_map.to('cpu').detach().numpy().copy().astype(np.uint8)
-        heat_map_img = Image.fromarray(heat_map)     
-            
+        heat_map_img = Image.fromarray(heat_map)
+
         img = Image.blend(img, heat_map_img, alpha)
     else:
         img = img.copy()
-        
+
     if caption:
         img = _write_on_image(img, caption)
-        
+
     if image_scale != 1.0:
         x, y = img.size
         size = (int(x * image_scale), int(y * image_scale))
         img = img.resize(size, Image.BICUBIC)
-        
+
     return img
-    
+
 
 def _convert_heat_map_colors(heat_map : torch.Tensor):
     def get_color(value):
         return np.array(cm.turbo(value / 255)[0:3])
-    
+
     color_map = np.array([ get_color(i) * 255 for i in range(256) ])
     color_map = torch.tensor(color_map, device=heat_map.device, dtype=dtype)
-    
+
     heat_map = (heat_map * 255).long()
-    
+
     return color_map[heat_map]
 
 def plot_overlay_heat_map(im, heat_map, word=None, out_file=None, crop=None):
@@ -135,7 +136,7 @@ def calc_context_size(token_length : int):
     return ((int)(len_check // 75) + 1) * 77
 
 def escape_prompt(prompt):
-    if type(prompt) is str:    
+    if type(prompt) is str:
         prompt = prompt.lower()
         prompt = re.sub(r"[\(\)\[\]]", "", prompt)
         prompt = re.sub(r":\d+\.*\d*", "", prompt)
@@ -145,10 +146,10 @@ def escape_prompt(prompt):
         for i in range(len(prompt)):
             prompt_new.append(escape_prompt(prompt[i]))
         return prompt_new
-    
+
 
 def compute_token_merge_indices(model, prompt: str, word: str, word_idx: int = None):
-        
+
     clip = None
     tokenize = None
     if type(model.cond_stage_model.wrapped) == FrozenCLIPEmbedder:
@@ -159,18 +160,18 @@ def compute_token_merge_indices(model, prompt: str, word: str, word_idx: int = N
         tokenize = open_clip.tokenizer._tokenizer.encode
     else:
         assert False
-        
+
     escaped_prompt = escape_prompt(prompt)
     # escaped_prompt = re.sub(r"[_-]", " ", escaped_prompt)
     tokens : list = tokenize(escaped_prompt)
     word = word.lower()
     merge_idxs = []
-    
+
     needles = tokenize(word)
-    
+
     if len(needles) == 0:
         return []
-        
+
     for i, token in enumerate(tokens):
         if needles[0] == token and len(needles) > 1:
             next = i + 1
@@ -180,14 +181,14 @@ def compute_token_merge_indices(model, prompt: str, word: str, word_idx: int = N
                     success = False
                     break
                 next += 1
-            
+
             # append consecutive indexes if all pass
             if success:
                 merge_idxs.extend(list(range(i, next)))
-            
+
         elif needles[0] == token:
             merge_idxs.append(i)
-            
+
     idxs = []
     for x in merge_idxs:
         seq = (int)(x / 75)
@@ -199,18 +200,18 @@ def compute_token_merge_indices(model, prompt: str, word: str, word_idx: int = N
     return idxs
 
 def compute_token_merge_indices_with_tokenizer(tokenizer, prompt: str, word: str, word_idx: int = None, limit : int = -1):
-        
+
     escaped_prompt = escape_prompt(prompt)
     # escaped_prompt = re.sub(r"[_-]", " ", escaped_prompt)
     tokens : list = tokenizer.tokenize(escaped_prompt)
     word = word.lower()
     merge_idxs = []
-    
+
     needles = tokenizer.tokenize(word)
-    
+
     if len(needles) == 0:
         return []
-        
+
     limit_count = 0
     for i, token in enumerate(tokens):
         if needles[0] == token and len(needles) > 1:
@@ -221,7 +222,7 @@ def compute_token_merge_indices_with_tokenizer(tokenizer, prompt: str, word: str
                     success = False
                     break
                 next += 1
-            
+
             # append consecutive indexes if all pass
             if success:
                 merge_idxs.extend(list(range(i, next)))
@@ -229,14 +230,14 @@ def compute_token_merge_indices_with_tokenizer(tokenizer, prompt: str, word: str
                     limit_count += 1
                     if limit_count >= limit:
                         break
-            
+
         elif needles[0] == token:
             merge_idxs.append(i)
             if limit > 0:
                 limit_count += 1
                 if limit_count >= limit:
                     break
-            
+
     idxs = []
     for x in merge_idxs:
         seq = (int)(x / 75)
@@ -263,54 +264,57 @@ class PromptAnalyzer:
     def __init__(self, clip : FrozenCLIPEmbedderWithCustomWordsBase, text : str):
         use_old = opts.use_old_emphasis_implementation
         assert not use_old, "use_old_emphasis_implementation is not supported"
-        
+
         self.clip = clip
         self.id_start = clip.id_start
         self.id_end = clip.id_end
         self.is_open_clip = True if type(clip) == FrozenOpenCLIPEmbedderWithCustomWords else False
         self.used_custom_terms = []
-        self.hijack_comments = []             
-        
-        remade_tokens, fixes, multipliers, token_count = self.tokenize_line(text, used_custom_terms=self.used_custom_terms, hijack_comments=self.hijack_comments)
-                  
+        self.hijack_comments = []
+
+        chunks, token_count = self.tokenize_line(text)
+
         self.token_count = token_count
-        self.fixes = fixes
+        self.fixes = list(chain.from_iterable(chunk.fixes for chunk in chunks))
         self.context_size = calc_context_size(token_count)
-        
+
+        tokens = list(chain.from_iterable(chunk.tokens for chunk in chunks))
+        multipliers = list(chain.from_iterable(chunk.multipliers for chunk in chunks))
+
         self.tokens = []
         self.multipliers = []
         for i in range(self.context_size // 77):
-            self.tokens.extend([self.id_start] + remade_tokens[i*75:i*75+75] + [self.id_end])
+            self.tokens.extend([self.id_start] + tokens[i*75:i*75+75] + [self.id_end])
             self.multipliers.extend([1.0] + multipliers[i*75:i*75+75]+ [1.0])
-            
+
     def create(self, text : str):
         return PromptAnalyzer(self.clip, text)
-            
-    def tokenize_line(self, line, used_custom_terms, hijack_comments):
-        remade_tokens, fixes, multipliers, token_count = self.clip.tokenize_line(line, used_custom_terms, hijack_comments)
-        return remade_tokens, fixes, multipliers, token_count
-    
-    def process_text(self, texts):       
-        batch_multipliers, remade_batch_tokens, used_custom_terms, hijack_comments, hijack_fixes, token_count = self.clip.process_text(texts)        
+
+    def tokenize_line(self, line):
+        chunks, token_count = self.clip.tokenize_line(line)
+        return chunks, token_count
+
+    def process_text(self, texts):
+        batch_multipliers, remade_batch_tokens, used_custom_terms, hijack_comments, hijack_fixes, token_count = self.clip.process_text(texts)
         return batch_multipliers, remade_batch_tokens, used_custom_terms, hijack_comments, hijack_fixes, token_count
-        
+
     def encode(self, text : str):
         return self.clip.tokenize([text])[0]
-    
+
     def calc_word_indecies(self, word : str, limit : int = -1, start_pos = 0):
         word = word.lower()
         merge_idxs = []
-            
-        tokens = self.tokens   
+
+        tokens = self.tokens
         needles = self.encode(word)
-            
+
         limit_count = 0
         current_pos = 0
         for i, token in enumerate(tokens):
             current_pos = i
             if i < start_pos:
-                continue            
-            
+                continue
+
             if needles[0] == token and len(needles) > 1:
                 next = i + 1
                 success = True
@@ -319,7 +323,7 @@ class PromptAnalyzer:
                         success = False
                         break
                     next += 1
-                
+
                 # append consecutive indexes if all pass
                 if success:
                     merge_idxs.extend(list(range(i, next)))
@@ -327,12 +331,12 @@ class PromptAnalyzer:
                         limit_count += 1
                         if limit_count >= limit:
                             break
-                
+
             elif needles[0] == token:
                 merge_idxs.append(i)
                 if limit > 0:
                     limit_count += 1
                     if limit_count >= limit:
                         break
-        
+
         return merge_idxs, current_pos
