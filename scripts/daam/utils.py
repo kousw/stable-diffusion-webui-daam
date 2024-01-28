@@ -4,9 +4,11 @@ from functools import lru_cache
 from pathlib import Path
 import random
 import re
+from typing import Union
 
 from PIL import Image, ImageFont, ImageDraw
-from fonts.ttf import Roboto
+# from fonts.ttf import Roboto
+from modules.paths_internal import roboto_ttf_file
 import matplotlib.pyplot as plt
 from matplotlib import cm
 import numpy as np
@@ -20,6 +22,7 @@ import open_clip.tokenizer
 from modules.sd_hijack_clip import FrozenCLIPEmbedderWithCustomWordsBase, FrozenCLIPEmbedderWithCustomWords
 from modules.sd_hijack_open_clip import FrozenOpenCLIPEmbedderWithCustomWords
 from modules.shared import opts
+from sgm.modules import GeneralConditioner
 
 __all__ = ['expand_image', 'set_seed', 'escape_prompt', 'calc_context_size', 'compute_token_merge_indices', 'compute_token_merge_indices_with_tokenizer', 'image_overlay_heat_map', 'plot_overlay_heat_map', 'plot_mask_heat_map', 'PromptAnalyzer']
 
@@ -44,7 +47,7 @@ def _write_on_image(img, caption, font_size = 32):
     margin=2
     fontsize=font_size
     draw = ImageDraw.Draw(img)
-    font = ImageFont.truetype(Roboto, fontsize)
+    font = ImageFont.truetype(roboto_ttf_file, fontsize)
     text_height=iy-60
     tx = draw.textbbox((0,0),caption,font)
     draw.text((int((ix-tx[2])/2),text_height+margin),caption,(0,0,0),font=font)
@@ -261,14 +264,15 @@ def cached_nlp(prompt: str, type='en_core_web_md'):
     return nlp(prompt)
 
 class PromptAnalyzer:
-    def __init__(self, clip : FrozenCLIPEmbedderWithCustomWordsBase, text : str):
+    def __init__(self, clip : Union[FrozenCLIPEmbedderWithCustomWordsBase, GeneralConditioner], text : str):
         use_old = opts.use_old_emphasis_implementation
         assert not use_old, "use_old_emphasis_implementation is not supported"
 
         self.clip = clip
-        self.id_start = clip.id_start
-        self.id_end = clip.id_end
+        # self.id_start = clip.id_start
+        # self.id_end = clip.id_end
         self.is_open_clip = True if type(clip) == FrozenOpenCLIPEmbedderWithCustomWords else False
+        self.is_sdxl = True if type(clip) == GeneralConditioner else False
         self.used_custom_terms = []
         self.hijack_comments = []
 
@@ -280,12 +284,14 @@ class PromptAnalyzer:
 
         tokens = list(chain.from_iterable(chunk.tokens for chunk in chunks))
         multipliers = list(chain.from_iterable(chunk.multipliers for chunk in chunks))
+        print(tokens, multipliers)
+        print(len(tokens), len(multipliers))
 
-        self.tokens = []
-        self.multipliers = []
-        for i in range(self.context_size // 77):
-            self.tokens.extend([self.id_start] + tokens[i*75:i*75+75] + [self.id_end])
-            self.multipliers.extend([1.0] + multipliers[i*75:i*75+75]+ [1.0])
+        self.tokens = tokens # []
+        self.multipliers = multipliers # []
+        # for i in range(self.context_size // 77):
+        #     self.tokens.extend([self.id_start] + tokens[i*75:i*75+75] + [self.id_end])
+        #     self.multipliers.extend([1.0] + multipliers[i*75:i*75+75]+ [1.0])
 
     def create(self, text : str):
         return PromptAnalyzer(self.clip, text)
@@ -296,6 +302,7 @@ class PromptAnalyzer:
 
     def process_text(self, texts):
         batch_multipliers, remade_batch_tokens, used_custom_terms, hijack_comments, hijack_fixes, token_count = self.clip.process_text(texts)
+        print(batch_multipliers, remade_batch_tokens, used_custom_terms, hijack_comments, hijack_fixes, token_count)
         return batch_multipliers, remade_batch_tokens, used_custom_terms, hijack_comments, hijack_fixes, token_count
 
     def encode(self, text : str):

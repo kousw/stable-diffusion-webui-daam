@@ -1,5 +1,4 @@
 .vscode/
 .env
 
-scripts/daam/__pycache__/*
-__pycache__/*
+__pycache__/
