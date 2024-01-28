@@ -101,9 +101,10 @@ class UNetCrossAttentionLocator(ModuleLocator[CrossAttention]):
             # if 'CrossAttn' in unet_block.__class__.__name__:
             if not layer_idx or i == layer_idx:
                 for module in unet_block.modules():
-                    if type(module) is SpatialTransformer:
+                    if module.__class__.__name__ == "SpatialTransformer":
                         spatial_transformer = module
                         for basic_transformer_block in spatial_transformer.transformer_blocks:
                             blocks.append(basic_transformer_block.attn2)
+                            
 
         return blocks

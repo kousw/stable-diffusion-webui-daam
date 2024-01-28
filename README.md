@@ -2,6 +2,11 @@
 
 This is a port of [DAAM](https://github.com/castorini/daam) for Stable Diffusion Web UI.
 
+*Now support for SDXL!*
+
+# Update
+- `2024/01/28` Fixed an issue where it did not work with the latest version of webui. Added support for SDXL.
+
 # Setup and Running
 
 Clone this repository to extension folder.

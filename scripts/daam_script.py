@@ -9,6 +9,8 @@ import modules.images as images
 import modules.scripts as scripts
 import torch
 from ldm.modules.encoders.modules import FrozenCLIPEmbedder, FrozenOpenCLIPEmbedder
+import sgm
+from sgm.modules import GeneralConditioner
 import open_clip.tokenizer
 from modules import script_callbacks
 from modules import script_callbacks, sd_hijack_clip, sd_hijack_open_clip
@@ -125,19 +127,27 @@ class Script(scripts.Script):
         if type(p.sd_model.cond_stage_model) == sd_hijack_clip.FrozenCLIPEmbedderWithCustomWords or \
             type(p.sd_model.cond_stage_model) == sd_hijack_open_clip.FrozenOpenCLIPEmbedderWithCustomWords:
             embedder = p.sd_model.cond_stage_model  
+        elif type(p.sd_model.cond_stage_model) == GeneralConditioner:    
+            conditioner = p.sd_model.cond_stage_model
+            print(conditioner.embedders)
+            embedder = conditioner.embedders[0]
         else:
             assert False, f"Embedder '{type(p.sd_model.cond_stage_model)}' is not supported."
             
         clip = None
         tokenize = None
-        if type(p.sd_model.cond_stage_model.wrapped) == FrozenCLIPEmbedder:
-            clip : FrozenCLIPEmbedder = p.sd_model.cond_stage_model.wrapped
+        clip_type = type(embedder.wrapped)
+        if clip_type == FrozenCLIPEmbedder:
+            clip : FrozenCLIPEmbedder = embedder.wrapped
             tokenize = clip.tokenizer.tokenize
-        elif type(p.sd_model.cond_stage_model.wrapped) == FrozenOpenCLIPEmbedder:
-            clip : FrozenOpenCLIPEmbedder = p.sd_model.cond_stage_model.wrapped
+        elif clip_type == FrozenOpenCLIPEmbedder:
+            clip : FrozenOpenCLIPEmbedder = embedder.wrapped
             tokenize = open_clip.tokenizer._tokenizer.encode
+        elif clip_type == sgm.modules.encoders.modules.FrozenCLIPEmbedder:
+            clip : sgm.modules.encoders.modules.FrozenCLIPEmbedder = embedder.wrapped
+            tokenize = clip.tokenizer.tokenize
         else:
-            assert False
+            assert False, f"CLIP '{clip_type}' is not supported."
             
         tokens = tokenize(utils.escape_prompt(styled_prompt))
         context_size = utils.calc_context_size(len(tokens))
@@ -147,9 +157,9 @@ class Script(scripts.Script):
         context_size = prompt_analyzer.context_size
                
         print(f"daam run with context_size={prompt_analyzer.context_size}, token_count={prompt_analyzer.token_count}")
-        # print(f"remade_tokens={prompt_analyzer.tokens}, multipliers={prompt_analyzer.multipliers}")
-        # print(f"hijack_comments={prompt_analyzer.hijack_comments}, used_custom_terms={prompt_analyzer.used_custom_terms}")
-        # print(f"fixes={prompt_analyzer.fixes}")
+        print(f"remade_tokens={prompt_analyzer.tokens}, multipliers={prompt_analyzer.multipliers}")
+        print(f"hijack_comments={prompt_analyzer.hijack_comments}, used_custom_terms={prompt_analyzer.used_custom_terms}")
+        print(f"fixes={prompt_analyzer.fixes}")
         
         if any(item[0] in self.attentions for item in self.prompt_analyzer.used_custom_terms):
             print("Embedding heatmap cannot be shown.")

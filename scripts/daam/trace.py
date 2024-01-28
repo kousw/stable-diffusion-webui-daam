@@ -53,6 +53,7 @@ class HeatMap:
 
     def compute_word_heat_map(self, word: str, word_idx: int = None) -> torch.Tensor:
         merge_idxs, _ = self.prompt_analyzer.calc_word_indecies(word)
+        # print("merge_idxs", merge_idxs)
         if len(merge_idxs) == 0:
             return None
         
@@ -252,7 +253,14 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
 
         return (weights * maps).sum(1, keepdim=True).cpu()
     
-    def _forward(hk_self, self, x, context=None, mask=None):
+    def _forward(hk_self, self, x, context=None, mask=None, additional_tokens=None):
+        
+        if additional_tokens is not None:
+            # get the number of masked tokens at the beginning of the output sequence
+            n_tokens_to_mask = additional_tokens.shape[1]
+            # add additional token
+            x = torch.cat([additional_tokens, x], dim=1)
+        
         hk_self.calledCount += 1
         batch_size, sequence_length, _ = x.shape
         h = self.heads
@@ -275,6 +283,10 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             sim.masked_fill_(~mask, max_neg_value)
         
         out = hk_self._hooked_attention(self, q, k, v, batch_size, sequence_length, dim)
+        
+        if additional_tokens is not None:
+            # remove additional token
+            out = out[:, n_tokens_to_mask:]
         
         return self.to_out(out)
     
