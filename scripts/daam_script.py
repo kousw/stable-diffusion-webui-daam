@@ -9,6 +9,7 @@ import modules.images as images
 import modules.scripts as scripts
 import torch
 from ldm.modules.encoders.modules import FrozenCLIPEmbedder, FrozenOpenCLIPEmbedder
+from modules_forge.forge_clip import CLIP_SD_21_H, CLIP_SD_15_L
 import sgm
 from sgm.modules import GeneralConditioner
 import open_clip.tokenizer
@@ -127,6 +128,8 @@ class Script(scripts.Script):
         if type(p.sd_model.cond_stage_model) == sd_hijack_clip.FrozenCLIPEmbedderWithCustomWords or \
             type(p.sd_model.cond_stage_model) == sd_hijack_open_clip.FrozenOpenCLIPEmbedderWithCustomWords:
             embedder = p.sd_model.cond_stage_model  
+        if type(p.sd_model.cond_stage_model) == CLIP_SD_15_L or type(p.sd_model.cond_stage_model) == CLIP_SD_21_H:
+            embedder = p.sd_model.cond_stage_model
         elif type(p.sd_model.cond_stage_model) == GeneralConditioner:    
             conditioner = p.sd_model.cond_stage_model
             print(conditioner.embedders)
@@ -267,7 +270,9 @@ class Script(scripts.Script):
             if match:
                 batch_pos = int(match.group(1))
         else:
-            batch_pos = 0
+            # for forge, cond batch index is (batch mod 2 == 1) with cfg 
+            # TODO: if cfg is not used, batch_pos = 0
+            batch_pos = 1
             
         if batch_pos < 0:
             return        

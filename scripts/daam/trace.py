@@ -253,8 +253,7 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
 
         return (weights * maps).sum(1, keepdim=True).cpu()
     
-    def _forward(hk_self, self, x, context=None, mask=None, additional_tokens=None):
-        
+    def _forward(hk_self, self, x, context=None, mask=None, additional_tokens=None, **kwargs):
         if additional_tokens is not None:
             # get the number of masked tokens at the beginning of the output sequence
             n_tokens_to_mask = additional_tokens.shape[1]
@@ -274,13 +273,13 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
 
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
 
-        sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
+        # sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
 
-        if exists(mask):
-            mask = rearrange(mask, 'b ... -> b (...)')
-            max_neg_value = -torch.finfo(sim.dtype).max
-            mask = repeat(mask, 'b j -> (b h) () j', h=h)
-            sim.masked_fill_(~mask, max_neg_value)
+        # if exists(mask):
+        #     mask = rearrange(mask, 'b ... -> b (...)')
+        #     max_neg_value = -torch.finfo(sim.dtype).max
+        #     mask = repeat(mask, 'b j -> (b h) () j', h=h)
+        #     sim.masked_fill_(~mask, max_neg_value)
         
         out = hk_self._hooked_attention(self, q, k, v, batch_size, sequence_length, dim)
         
@@ -337,6 +336,8 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             batch_size (`int`): the batch size
             use_context (`bool`): whether to check if the resulting attention slices are between the words and the image
         """
+        scale = self.dim_head ** -0.5
+            
         batch_size_attention = query.shape[0]
         hidden_states = torch.zeros(
             (batch_size_attention, sequence_length, dim // self.heads), device=query.device, dtype=query.dtype
@@ -354,13 +355,15 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             start_idx = batch_index * slice_size
             end_idx = (batch_index + 1) * slice_size
             attn_slice = (
-                    torch.einsum("b i d, b j d -> b i j", query[start_idx:end_idx], key[start_idx:end_idx]) * self.scale
+                    torch.einsum("b i d, b j d -> b i j", query[start_idx:end_idx], key[start_idx:end_idx]) * scale
             )
             factor = int(math.sqrt(factor_base // attn_slice.shape[1]))
             attn_slice = attn_slice.softmax(-1)
             hid_states = torch.einsum("b i j, b j d -> b i d", attn_slice, value[start_idx:end_idx])            
-                
-            if use_context and  hk_self.calledCount % 2 == 1 and attn_slice.shape[-1] == hk_self.context_size:    
+                            
+            # for forge, cond batch index is (batch mod 2 == 1) with cfg 
+            # TODO: if cfg is not used batch_index % 2 == 1 should be removed
+            if use_context and  batch_index % 2 == 1 and attn_slice.shape[-1] == hk_self.context_size:    
                 if factor >= 1:
                     factor //= 1
                     maps = hk_self._up_sample_attn(attn_slice, value, factor)
