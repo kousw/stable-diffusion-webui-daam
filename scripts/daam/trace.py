@@ -97,9 +97,9 @@ class MmDetectHeatMap:
 
 
 class DiffusionHeatMapHooker(AggregateHooker):
-    def __init__(self, model: LatentDiffusion, heigth : int, width : int, context_size : int = 77, weighted: bool = False, layer_idx: int = None, head_idx: int = None):
+    def __init__(self, model: LatentDiffusion, heigth : int, width : int, context_size : int = 77, weighted: bool = False, layer_idx: int = None, head_idx: int = None, interpolation_method: str = 'bicubic'):
         heat_maps = defaultdict(lambda: defaultdict(list)) # batch index, factor, attention
-        modules = [UNetCrossAttentionHooker(x, heigth, width, heat_maps, context_size=context_size, weighted=weighted, head_idx=head_idx) for x in UNetCrossAttentionLocator().locate(model.model.diffusion_model, layer_idx)]
+        modules = [UNetCrossAttentionHooker(x, heigth, width, heat_maps, context_size=context_size, weighted=weighted, head_idx=head_idx, interpolation_method=interpolation_method) for x in UNetCrossAttentionLocator().locate(model.model.diffusion_model, layer_idx)]
         self.forward_hook = UNetForwardHooker(model.model.diffusion_model, heat_maps)
         modules.append(self.forward_hook)
         
@@ -186,7 +186,7 @@ class DiffusionHeatMapHooker(AggregateHooker):
 
 
 class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
-    def __init__(self, module: CrossAttention, img_height : int, img_width : int, heat_maps: defaultdict(defaultdict), context_size: int = 77, weighted: bool = False, head_idx: int = 0):
+    def __init__(self, module: CrossAttention, img_height : int, img_width : int, heat_maps: defaultdict(defaultdict), context_size: int = 77, weighted: bool = False, head_idx: int = 0, interpolation_method: str = 'bicubic'):
         super().__init__(module)
         self.heat_maps = heat_maps
         self.context_size = context_size
@@ -195,14 +195,15 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         self.img_height = img_height
         self.img_width =  img_width
         self.calledCount = 0
+        self.interpolation_method = interpolation_method # Literal['bilinear', 'bicubic', 'conv']
         
     def reset(self):
         self.heat_maps.clear()
         self.calledCount = 0
         
     @torch.no_grad()
-    def _up_sample_attn(self, x, value, factor, method='bicubic'):
-        # type: (torch.Tensor, torch.Tensor, int, Literal['bicubic', 'conv']) -> torch.Tensor
+    def _up_sample_attn(self, x, value, factor):
+        # type: (torch.Tensor, torch.Tensor, int) -> torch.Tensor
         # x shape: (heads, height * width, tokens)
         """
         Up samples the attention map in x using interpolation to the maximum size of (64, 64), as assumed in the Stable
@@ -222,6 +223,8 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         h = int(math.sqrt ( (self.img_height * x.size(1)) / self.img_width))
         w = int(self.img_width * h / self.img_height)
         
+        method = self.interpolation_method
+        
         h_fix = w_fix = 64
         if h >= w:
             w_fix = int((w * h_fix) / h)
@@ -237,8 +240,8 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             for map_ in x:
                 map_ = map_.unsqueeze(1).view(map_.size(0), 1, h, w)
 
-                if method == 'bicubic':
-                    map_ = F.interpolate(map_, size=(h_fix, w_fix), mode='bicubic')
+                if method == 'bicubic' or method == 'bilinear':
+                    map_ = F.interpolate(map_, size=(h_fix, w_fix), mode=method)
                     maps.append(map_.squeeze(1))
                 else:
                     maps.append(F.conv_transpose2d(map_, weight, stride=factor).squeeze(1))

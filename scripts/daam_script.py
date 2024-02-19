@@ -62,6 +62,9 @@ class Script(scripts.Script):
                     alpha = gr.Slider(label='Heatmap blend alpha', value=0.5, minimum=0, maximum=1, step=0.01)
                 
                     heatmap_image_scale = gr.Slider(label='Heatmap image scale', value=1.0, minimum=0.1, maximum=1, step=0.025)
+                    
+                with gr.Row():
+                    interpolation_mode = gr.Radio(["bicubic", "bilinear", "conv"], value="bicubic", label = "Heatmap interpolation method")
 
                 with gr.Row():
                     trace_each_layers = gr.Checkbox(label = 'Trace each layers', value=False)
@@ -71,7 +74,7 @@ class Script(scripts.Script):
         
         self.tracers = None
         
-        return [attention_texts, hide_images, dont_save_images, hide_caption, use_grid, grid_layouyt, alpha, heatmap_image_scale, trace_each_layers, layers_as_row] 
+        return [attention_texts, hide_images, dont_save_images, hide_caption, use_grid, grid_layouyt, alpha, heatmap_image_scale, interpolation_mode, trace_each_layers, layers_as_row] 
     
     def process(self, 
             p : StableDiffusionProcessing, 
@@ -83,6 +86,7 @@ class Script(scripts.Script):
             grid_layouyt :str,
             alpha : float, 
             heatmap_image_scale : float,
+            interpolation_mode: str,
             trace_each_layers : bool,
             layers_as_row: bool):
         
@@ -97,6 +101,7 @@ class Script(scripts.Script):
         self.use_grid = use_grid
         self.grid_layouyt = grid_layouyt
         self.heatmap_image_scale = heatmap_image_scale
+        self.interpolation_mode = interpolation_mode
         self.heatmap_images = dict()
 
         self.attentions = [s.strip() for s in attention_texts.split(",") if s.strip()]
@@ -113,7 +118,8 @@ class Script(scripts.Script):
             use_grid : bool, 
             grid_layouyt :str,
             alpha : float, 
-            heatmap_image_scale : float,
+            heatmap_image_scale : float,            
+            interpolation_mode: str,
             trace_each_layers : bool,
             layers_as_row: bool,
             prompts,
@@ -175,10 +181,10 @@ class Script(scripts.Script):
             if trace_each_layers:
                 num_input = len(p.sd_model.model.diffusion_model.input_blocks)
                 num_output = len(p.sd_model.model.diffusion_model.output_blocks)
-                self.tracers = [trace(p.sd_model, p.height, p.width, context_size, layer_idx=i) for i in range(num_input + num_output + 1)]
+                self.tracers = [trace(p.sd_model, p.height, p.width, context_size, interpolation_method = interpolation_mode, layer_idx=i) for i in range(num_input + num_output + 1)]
                 self.attn_captions = [f"IN{i:02d}" for i in range(num_input)] + ["MID"] + [f"OUT{i:02d}" for i in range(num_output)]
             else:
-                self.tracers = [trace(p.sd_model, p.height, p.width, context_size)]
+                self.tracers = [trace(p.sd_model, p.height, p.width, context_size, interpolation_method = interpolation_mode)]
                 self.attn_captions = [""]
         
             for tracer in self.tracers:
@@ -193,6 +199,7 @@ class Script(scripts.Script):
             grid_layouyt :str,
             alpha : float, 
             heatmap_image_scale : float,
+            interpolation_mode: str,
             trace_each_layers : bool,
             layers_as_row: bool,
             **kwargs):
