@@ -46,10 +46,10 @@ class UNetForwardHooker(ObjectHooker[UNetModel]):
 
 
 class HeatMap:
-    def __init__(self, prompt_analyzer: PromptAnalyzer, prompt: str, heat_maps: torch.Tensor):
-        self.prompt_analyzer = prompt_analyzer.create(prompt)
+    def __init__(self, prompt_analyzer: PromptAnalyzer, heat_maps: torch.Tensor):
+        self.prompt_analyzer = prompt_analyzer
         self.heat_maps = heat_maps
-        self.prompt = prompt
+        self.prompt = prompt_analyzer.prompt
 
     def compute_word_heat_map(self, word: str, word_idx: int = None) -> torch.Tensor:
         merge_idxs, _ = self.prompt_analyzer.calc_word_indecies(word)
@@ -182,7 +182,7 @@ class DiffusionHeatMapHooker(AggregateHooker):
         maps = torch.stack([torch.stack(x, 0) for x in all_merges], dim=0)
         maps = maps.sum(0).to(device).sum(2).sum(0)
 
-        return HeatMap(prompt_analyzer, prompt, maps)
+        return HeatMap(prompt_analyzer, maps)
 
 
 class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):

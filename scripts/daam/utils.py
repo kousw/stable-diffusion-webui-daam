@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 import random
 import re
+import sys
 from typing import Union
 
 from PIL import Image, ImageFont, ImageDraw
@@ -276,6 +277,7 @@ class PromptAnalyzer:
         self.used_custom_terms = []
         self.hijack_comments = []
 
+        self.prompt = text
         chunks, token_count = self.tokenize_line(text)
 
         self.token_count = token_count
