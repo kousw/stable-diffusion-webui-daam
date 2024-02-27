@@ -236,15 +236,15 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         value = value.permute(1, 0, 2)
         weights = 1
 
-        with torch.cuda.amp.autocast(dtype=torch.float32):
-            for map_ in x:
-                map_ = map_.unsqueeze(1).view(map_.size(0), 1, h, w)
+        # with torch.cuda.amp.autocast(dtype=torch.float32):
+        for map_ in x:
+            map_ = map_.unsqueeze(1).view(map_.size(0), 1, h, w)
 
-                if method == 'bicubic' or method == 'bilinear':
-                    map_ = F.interpolate(map_, size=(h_fix, w_fix), mode=method)
-                    maps.append(map_.squeeze(1))
-                else:
-                    maps.append(F.conv_transpose2d(map_, weight, stride=factor).squeeze(1))
+            if method == 'bicubic' or method == 'bilinear':
+                map_ = F.interpolate(map_, size=(h_fix, w_fix), mode=method)
+                maps.append(map_.squeeze(1))
+            else:
+                maps.append(F.conv_transpose2d(map_, weight, stride=factor).squeeze(1))
 
         if self.weighted:
             weights = value.norm(p=1, dim=-1, keepdim=True).unsqueeze(-1)
